@@ -1,6 +1,6 @@
 {
   "name": "spec-stack",
-  "version": "0.12.1",
+  "version": "0.12.2",
   "description": "Bootstrap CLI for the spec-stack multi-agent harness: spec-workflow's mechanical gates + ultrawork parallel dispatch + ultraqa QA cycling + TDD. Installs the Claude Code plugin and the Codex plugin from one command.",
   "license": "MIT",
   "bin": {

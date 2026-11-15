@@ -9,7 +9,7 @@
       "name": "spec",
       "source": "./",
       "description": "Spec-driven multi-agent harness: research → ask → propose → HARD GATE → apply (parallel ultrawork dispatch, TDD per task) → ultraqa convergence → fresh-context verify → archive, plus the goal-driven autonomous loop (/spec:loop). Gates enforced by 5 hooks; execution accelerated by tier-routed executor/architect/qa-tester agents",
-      "version": "0.12.1",
+      "version": "0.12.2",
       "author": {
         "name": "effinrich"
       },

@@ -7,11 +7,13 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const HOME = os.homedir();
 const REPO = "effinrich/spec-stack";
 const args = process.argv.slice(2);
 const command = args[0] && !args[0].startsWith("--") ? args[0] : "init";
@@ -132,6 +134,124 @@ function install() {
   return installed > 0 ? 0 : 1;
 }
 
+function terseInstall() {
+  const claudeDir = path.join(HOME, ".claude");
+  const terseDir = path.join(claudeDir, "terse");
+  const scriptSrc = path.join(ROOT, "extras", "terse", "terse-enforcer.mjs");
+  const scriptDst = path.join(terseDir, "terse-enforcer.mjs");
+
+  if (!fs.existsSync(scriptSrc)) {
+    console.error(`Hook source not found: ${scriptSrc}`);
+    return 1;
+  }
+
+  // 1. Copy the enforcer script.
+  fs.mkdirSync(terseDir, { recursive: true });
+  fs.copyFileSync(scriptSrc, scriptDst);
+
+  // 2. Write limits config.
+  const limits = { maxWords: 60, maxParas: 2, maxHeaders: 0, maxBullets: 4 };
+  const arg = (name) => {
+    const i = args.indexOf(name);
+    return i !== -1 && args[i + 1] ? Number(args[i + 1]) : undefined;
+  };
+  if (arg("--max-words")) limits.maxWords = arg("--max-words");
+  if (arg("--max-paras")) limits.maxParas = arg("--max-paras");
+  if (arg("--max-headers")) limits.maxHeaders = arg("--max-headers");
+  if (arg("--max-bullets")) limits.maxBullets = arg("--max-bullets");
+  fs.writeFileSync(path.join(claudeDir, "terse.json"), JSON.stringify(limits, null, 2) + "\n");
+
+  // 3. Register the Stop hook in settings.json (idempotent).
+  const settingsPath = path.join(claudeDir, "settings.json");
+  let settings = {};
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+  } catch {
+    /* create fresh */
+  }
+  settings.hooks ??= {};
+  settings.hooks.Stop ??= [];
+  const hookCommand = `node "${scriptDst}"`;
+  const already = settings.hooks.Stop.some((group) =>
+    (group.hooks || []).some((h) => h.command === hookCommand)
+  );
+  if (!already) {
+    settings.hooks.Stop.push({ hooks: [{ type: "command", command: hookCommand, timeout: 15 }] });
+  }
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+
+  console.log(`terse hook installed.`);
+  console.log(`  script:  ${scriptDst}`);
+  console.log(`  config:  ${path.join(claudeDir, "terse.json")} ${JSON.stringify(limits)}`);
+  console.log(`  hook:    Stop -> ${hookCommand} in ${settingsPath}`);
+  console.log(`\nEvery reply is now mechanically capped: over the limits, the stop is blocked and`);
+  console.log(`the reply is rewritten flat and short. One rewrite per turn; the session fuse`);
+  console.log(`passes after 2 blocks so a stubborn model can never loop. Remove:`);
+  console.log(`  npx spec-stack terse remove`);
+  return 0;
+}
+
+function terseRemove() {
+  const claudeDir = path.join(HOME, ".claude");
+  const scriptDst = path.join(claudeDir, "terse", "terse-enforcer.mjs");
+  const hookCommand = `node "${scriptDst}"`;
+  const settingsPath = path.join(claudeDir, "settings.json");
+
+  let removed = 0;
+  try {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    if (settings.hooks?.Stop) {
+      settings.hooks.Stop = settings.hooks.Stop
+        .map((group) => ({
+          ...group,
+          hooks: (group.hooks || []).filter((h) => {
+            if (h.command === hookCommand) {
+              removed++;
+              return false;
+            }
+            return true;
+          }),
+        }))
+        .filter((group) => (group.hooks || []).length > 0);
+      if (settings.hooks.Stop.length === 0) delete settings.hooks.Stop;
+      if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+    }
+  } catch {
+    /* no settings file -> nothing to unregister */
+  }
+  for (const p of [path.join(claudeDir, "terse.json"), path.join(claudeDir, "terse-state.json")]) {
+    try {
+      fs.rmSync(p);
+    } catch {
+      /* already gone */
+    }
+  }
+  try {
+    fs.rmSync(path.join(claudeDir, "terse"), { recursive: true, force: true });
+  } catch {
+    /* already gone */
+  }
+  console.log(`terse hook removed (${removed} hook entr${removed === 1 ? "y" : "ies"} unregistered).`);
+  return 0;
+}
+
+function terseStatus() {
+  const claudeDir = path.join(HOME, ".claude");
+  const scriptDst = path.join(claudeDir, "terse", "terse-enforcer.mjs");
+  const installed = fs.existsSync(scriptDst);
+  console.log(`terse hook: ${installed ? "INSTALLED" : "not installed"}`);
+  if (installed) {
+    try {
+      console.log(`  limits:  ${fs.readFileSync(path.join(claudeDir, "terse.json"), "utf8").trim()}`);
+    } catch {
+      /* defaults in effect */
+    }
+  }
+  return 0;
+}
+
 function codexInstall() {
   const isWin = process.platform === "win32";
   const script = isWin ? path.join(ROOT, "codex", "install.ps1") : path.join(ROOT, "codex", "install.sh");
@@ -155,9 +275,13 @@ switch (command) {
     process.exit(0);
   case "codex-install":
     process.exit(codexInstall());
+  case "terse":
+    process.exit(
+      args[1] === "remove" ? terseRemove() : args[1] === "status" ? terseStatus() : terseInstall()
+    );
   case "help":
   case "--help":
-    console.log(`spec-stack — bootstrap for the ${REPO} multi-agent harness\n\ncommands: init (default) | doctor | map | codex-install\nflags:   --claude (skip codex) | --codex (skip claude)`);
+    console.log(`spec-stack — bootstrap for the ${REPO} multi-agent harness\n\ncommands: init (default) | doctor | map | codex-install\n          terse install|remove|status [--max-words N --max-paras N --max-headers N --max-bullets N]\nflags:   --claude (skip codex) | --codex (skip claude)`);
     process.exit(0);
   case "init":
   default:

@@ -75,3 +75,15 @@ failure mode — the freshness pre-check in each dispatch command is the mitigat
 ## Provenance
 
 See NOTICE. Base: kamioj/spec-workflow (MIT). TDD skill: mattpocock/skills (MIT). Ultrawork/ultraqa adapted from the oh-my-claudecode family.
+
+## Terse enforcement hook (optional)
+
+Mechanical reply-length gate. Where ponytail injects a terse ruleset (prose), this measures the actual reply from the transcript and blocks the Stop until it is flat and short (prose does not bind agents; a word count does).
+
+```sh
+npx github:effinrich/spec-stack terse install   # --max-words 60 --max-paras 2 --max-headers 0 --max-bullets 4
+npx github:effinrich/spec-stack terse status
+npx github:effinrich/spec-stack terse remove
+```
+
+Mechanics: Stop hook in user settings (not the plugin, so it never ships to plugin users and never competes with the loop driver). Limits from ~/.claude/terse.json or env. Loop safety: passes on stop_hook_active (one rewrite per turn) plus a per-session fuse (passes after 2 blocks in 90s). Fails open on any error. Code fences are excluded from the count — code is the answer, not prose.
