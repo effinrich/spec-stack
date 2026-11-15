@@ -1,0 +1,27 @@
+# NOTICE
+
+This repository packages and extends third-party work. All components keep
+their upstream licenses (MIT).
+
+## spec-workflow (the base)
+
+- Source: https://github.com/kamioj/spec-workflow (v0.11.1)
+- License: MIT, Copyright (c) 2026 kamioj
+- Vendored in full: commands, hooks, agents, skills/core, codex tree.
+  Modifications: harness additions described in HARNESS.md — new commands
+  (`/spec:ultrawork`, `/spec:ultraqa`), new agents (`spec:executor`,
+  `spec:architect`, `spec:qa-tester`), integration sections in
+  `core/commands/apply.md` and `core/commands/loop.md`, updated manifests.
+
+## tdd skill
+
+- Source: https://github.com/mattpocock/skills (skills/engineering/tdd)
+- License: MIT, Copyright (c) 2026 Matt Pocock
+- Vendored at `skills/tdd/` (SKILL.md, tests.md, mocking.md), unmodified.
+
+## ultrawork / ultraqa
+
+- Adapted from the oh-my-claudecode / oh-my-codex skill family
+  (https://github.com/TechDufus/oh-my-claude and related ports), rewritten for
+  this plugin: command-based, dispatching this plugin's own agents, with
+  loop-safety constraints matching spec-workflow's Stop-hook design.

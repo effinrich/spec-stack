@@ -1,0 +1,105 @@
+---
+description: Reports where the current SDD change stands, what artifacts exist, and which commands can be run next. Use when returning after an interruption and unsure where things left off.
+allowed-tools: Read, Glob, Bash(ls:*, sh:*)
+---
+<!-- GENERATED from core/commands/status.md — edit the core file and run node tools/generate.mjs; hand edits will be overwritten -->
+
+# /spec:status
+
+## Task
+
+Read the `spec/changes/` directory and output the current change status; `spec/archive/` is read only for step 7's diff-mode record line.
+
+## Inspection process
+
+1. **Glob `spec/changes/*/`** to list all un-archived changes; classify each dir first:
+   - `.paused` present → **paused** (report its date + reason line; excluded from stage detection and next-step recommendations)
+   - `fix.md` present AND `proposal.md` absent → **fix batch** (streaming light tier; stage from fix.md's `status:` field + pending F-N entry count)
+   - `quick.md` present AND `proposal.md` absent → **legacy quick change** (legacy quick.md light tier; stage from quick.md's `status:` field)
+   - otherwise → normal full change (an upgraded light-tier dir with proposal.md lands here — precedence: proposal.md wins)
+2. For each change, check artifact presence:
+   - `research.md` (current research) + discarded drafts under `research/` (if any), `index.md`, `design.md`, `proposal.md`, `tasks.md`
+3. Read `research.md` to count `[TBD-N]` entries under `## Open [TBD]` and the number of `## Decided` entries — splitting Decided by mark: plain / `auto` / `escalated`; count discarded drafts under `research/` (if any)
+4. Read `proposal.md` to check whether the HARD GATE approval marker is present (`<!-- APPROVED: YYYY-MM-DD HH:mm -->`)
+5. Read `verify.md` (the verification ledger, if present): frontmatter `round` / `conclusion` + count of Status=open findings, split by origin (round 0 = critique panel / verifier rounds / `source: user`)
+6. **Views** (`<change>/view/` present): run the render script's check mode (/spec:view § Staleness check) — never recompute stamps yourself, the script twins are the only stamp authority; report each printed stale line.
+7. **Diff-mode records** (`spec/archive/` dirs whose verify.md frontmatter carries `mode: diff` — the frontmatter decides, never the dir name, because an archived change may itself be named `verify-…`): report their count and newest date in one line; their views are not staleness-checked
+
+## Output format
+
+No active change:
+
+```
+No active SDD change.
+Start a new task: /spec:research "<direction>"
+(diff-mode records present → one more line: `Diff-mode verify records: <N>, newest <date> — spec/archive/<date>-verify-<slug>/`)
+```
+
+Active change present:
+
+```
+Active change: <kebab-name>
+Artifacts:
+  research.md ✓ (current research)
+    Drafts:      <K> (under research/, if any)
+    Open [TBD]:  <N>
+    Decided:     <M> (<A> auto, <E> escalated — escalated stand unless overturned at the gate)
+  design.md   <✓/✗> (note whether one is needed if absent)
+  proposal.md ✓ (HARD GATE: <pending approval / approved / rejected>)
+  tasks.md    <✓/✗>
+  verify.md   <✓/✗> (round <N>, <pass/fail>, <M> open — critique r0: <C> · verifier: <V> · user-sourced: <U>)
+  view/       <✓ fresh / <K> stale: <stage list> — /spec:view <stage> / ✗ none rendered>
+
+Milestone:
+  Rounds so far: <e.g. "critique r0 (2 findings, 1 fixed) → verify r1 (pass) → user eval r2 (1 open)">
+  Touchpoint position: <before HARD GATE / between gate and acceptance / at acceptance (loop ends when you say "archive")>
+
+Current stage: <determined by the state machine below>
+Recommended next step: <mapped from the state machine below — do not generate from memory>
+```
+
+Diff-mode verify records (step 7) close either template with one line: `Diff-mode verify records: <N>, newest <date> — spec/archive/<date>-verify-<slug>/`.
+
+Paused changes are listed separately, never counted as active:
+
+```
+Paused changes:
+  <name> — paused <date>, reason: <reason>   (resume: /spec:resume)
+```
+
+A fix batch reports its own two-line form: `Fix batch: <N> entries pending audit — <open/shipped> (streaming light tier; /spec:fix appends, /spec:ship audits + archives)`. A legacy quick change reports: `Quick change: <name> — <in-flight/done> (legacy quick.md light tier; archive when done)`.
+
+Multiple un-archived ACTIVE changes → list all with the **current one marked** (read `spec/changes/.current`; parallel changes coexist freely — `/spec:resume <name>` switches the pointer). No pointer set → note that gates will ask for one; flag verify-passed changes as archive candidates.
+
+## State machine mapping (authoritative definition of "Current stage" + "Recommended next step" output)
+
+**Generate output strictly from the table below** — do not fill in from training-data memory, or you will output stale flow steps (e.g., "reply go to proceed").
+
+**Recommended next step must be self-contained** (SKILL "Self-Contained Prompts"): do not just throw a command name — include "why this step" (the specific reason the current state leads here). The recommendation texts in the table already include a brief rationale; copy them as-is, do not trim them down to a bare command.
+
+| Detection condition | Current stage | Recommended next step (output this text verbatim) |
+|---|---|---|
+| `spec/changes/` is empty (or holds only paused dirs) | No active change | `/spec:research "<direction>"` to start a new survey (paused changes present → or `/spec:resume` to pick one back up) |
+| dir has `.paused` | Paused | Report only ("paused <date>: <reason>"); no next step is recommended for a paused change — `/spec:resume` when the user wants it back |
+| `fix.md` present, `proposal.md` absent, `status: open` | Fix batch open (N entries pending) | Keep streaming with `/spec:fix`, or close the batch with `/spec:ship` (ONE audit over the accumulated diff, then archive) — a fixes dir doesn't block anything |
+| `fix.md` present, `proposal.md` absent, `status: shipped` | Fix batch shipped, archive pending | The archive move didn't complete — `/spec:archive` finishes it (the archive gate's fix branch passes a shipped+Audit batch through) |
+| `quick.md` present, `proposal.md` absent | Legacy quick change (quick.md format) | `status: done` → archive when ready (`/spec:archive`); otherwise finish per its quick.md record — new light-tier work uses `/spec:fix` |
+| `research.md` exists + `## Open [TBD]` is non-empty | Research has open TBDs | `/spec:ask` to work through the pending decisions |
+| `research.md` exists + Open [TBD] empty + no `proposal.md` | Interrogation done, awaiting propose | For complex tasks, `/spec:design` first (architecture / >3 interfaces / data-flow diagram); otherwise `/spec:propose` |
+| `proposal.md` exists + **no** `<!-- APPROVED: ... -->` marker | Awaiting HARD GATE approval | ✅ Satisfied → `/spec:apply` (apply auto-appends APPROVED then implements)<br>🔧 Partial changes → `/spec:revise [why \| what \| how \| risk]`<br>💭 Want to discuss → `/spec:chat`<br>🔄 Direction changed → `/spec:research "<new direction>"` |
+| `proposal.md` has APPROVED + tasks.md (if present) has unchecked tasks, or code changes have not been through verify | In progress | `/spec:apply` to continue; when the last item lands, `/spec:verify` runs the ONE closing independent pass |
+| Main implementation done but no `verify.md` ledger yet (or code changed since its last round) | Awaiting verification | `/spec:verify` to run the four-dimension check |
+| `verify.md` latest round `conclusion: fail` (incl. escalated still-open findings) | Verification failed | Review the ledger's open findings: `/spec:apply` to continue fixing / `/spec:revise` to fix the proposal (if the proposal itself is wrong) |
+| `verify.md` latest round `conclusion: pass` | **Archive candidate** — verification passed, no follow-up in flight | Recommend closing: `/spec:archive` sediments its knowledge and frees the slot (the archive act itself stays yours to say). Optional first: heterogeneous Codex peer review → `/spec:verify --codex` |
+| The user explicitly said "archive" in conversation (not file-detectable — never inferred from artifacts alone) | Ready to archive | `/spec:archive` |
+
+**Key anti-patterns**:
+
+- ❌ Outputting "approve → reply go" during the awaiting-approval stage — no such step exists: invoking `/spec:apply` IS the approval, and apply appends the APPROVED marker itself
+- ❌ Executing an archive the user didn't ask for (recommending "this change is an archive candidate" is required; running `/spec:archive` on their behalf is not — the act stays user-explicit)
+- ❌ Generating "Recommended next step" from memory — MUST cross-reference the table above for the current stage
+
+## What this command does NOT do
+
+- Does not create or modify any files
+- Read-only

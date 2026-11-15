@@ -1,0 +1,30 @@
+{
+  "name": "spec-harness",
+  "description": "spec-workflow vendored and extended into a full multi-agent harness: mechanical gate hooks (spec-workflow) + parallel tier-routed execution (ultrawork) + bounded QA cycling (ultraqa) + TDD per-task discipline (Pocock tdd skill)",
+  "owner": {
+    "name": "effinrich"
+  },
+  "plugins": [
+    {
+      "name": "spec",
+      "source": "./",
+      "description": "Spec-driven multi-agent harness: research → ask → propose → HARD GATE → apply (parallel ultrawork dispatch, TDD per task) → ultraqa convergence → fresh-context verify → archive, plus the goal-driven autonomous loop (/spec:loop). Gates enforced by 5 hooks; execution accelerated by tier-routed executor/architect/qa-tester agents",
+      "version": "0.12.0",
+      "author": {
+        "name": "effinrich"
+      },
+      "category": "development",
+      "keywords": [
+        "spec",
+        "harness",
+        "multi-agent",
+        "ultrawork",
+        "ultraqa",
+        "tdd",
+        "workflow",
+        "hook",
+        "sdd"
+      ]
+    }
+  ]
+}

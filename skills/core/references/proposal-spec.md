@@ -1,0 +1,134 @@
+<!-- GENERATED from core/references/proposal-spec.md — edit the core file and run node tools/generate.mjs; hand edits will be overwritten -->
+# proposal.md spec
+
+`spec/changes/<change-name>/proposal.md` is the **final-solution artifact** of the sdd workflow. Produced by `/spec:propose`, it carries the HARD GATE approval marker.
+
+## Format
+
+```markdown
+# Proposal: <change-name>
+
+## Why
+Why this change is being made (business motivation / technical pain / time window). 1–3 paragraphs.
+
+## What
+What concretely changes (files / modules / interfaces / additions / deletions / renames). A list is fine.
+- <item> | refs: R-N[, R-M] | verify: <observable behavior or executable check that proves this item landed>
+- ...
+
+(`refs:` cites the change's index.md `## Requirements` — the quote must entail the item; a mismatched ref is audited as unsourced, same as no ref. Legacy change without index.md → omit the clause; the gate declares "legacy change (no index)".)
+
+**Not in this change**: <1–3 lines of adjacent scope explicitly excluded — the boundary of what approval covers>
+
+## How
+Key technical decisions (distilled from research.md `## Decided`, **not copied verbatim**):
+- Choice: X (not Y)
+- Reason: one distilled sentence — **the conclusion and reason must be self-contained here**; the deep argument lives in design `## Key Decisions` (apply doesn't read research, so a pointer can't stand in for the conclusion)
+- Failure strategy / key algorithm / key parameters ... — any fallback / degrade / compat behavior the implementation may introduce **MUST be decided here or in `## Risk`**; `/spec:verify`'s charter audit treats untraceable fallbacks as defects (critical on data-write paths)
+
+## Risk
+- Blast radius: which modules / interfaces / user scenarios are affected
+- Risk: **the concrete hazard of each key decision + its trigger scenario** (not a vague "there may be risk"; it must explain "under what operation it fails in what way") + mitigation
+- Rollback plan: how to back it out
+```
+
+## Key flow diagram (in `## How`)
+
+Every proposal's `## How` carries ONE mermaid flowchart of the key flow **after** this change — the picture a reader understands at a glance, which no amount of prose replaces. It is drawn by the design-spec.md § Drawing the Architecture iron rules, applied to a flow:
+
+- **Domains are layers**: one `subgraph` per domain / stage, top to bottom in the order the flow passes through them (the view renders each as a full-width band) — as many as the flow really has
+- **Name + one line per box**, never fields: `A["title<br/>one-line role"]`
+- **Every arrow says what it does** (`-->|run /spec:verify|`), one direction per arrow — a request and its answer are two arrows, each with its own label (`A -->|asks| B` and `B -->|answers| A`), so the reader sees both what is sent and what comes back
+- **Draw the closed loop**: the flow ends by delivering back to whoever started it
+- **Mark what this change adds** with `:::new` (the view highlights it and adds the legend); unmarked boxes are the existing flow, kept so the reader sees where the new part plugs in
+- **≤ 12 boxes, ≤ 4 per layer**; a layer that needs more is really two stages (split it), and a bigger flow belongs in design.md, split by the iron rules
+
+Skeleton:
+
+```mermaid
+flowchart TD
+  subgraph You
+    A["start"]
+    Z["receive result"]
+  end
+  subgraph Stage one
+    B["existing step"]
+    C["new step<br/>what it does"]:::new
+  end
+  A -->|action| B
+  B -->|condition| C
+  C -->|deliver| Z
+```
+
+Write the labels in the conversation language. The diagram does not count toward the section budget; it never replaces the How bullets (apply reads those), it shows how they fit together. A block the view cannot draw (not a `flowchart` / `graph`) is shown as source and the render prints `fallback: How — key-flow diagram not parsed` — fix the diagram, never delete it.
+
+## Section constraints
+
+- Each section **≤ 5 lines** (What: ≤5 items; the `| refs:` / `| verify:` clauses on an item, the closing **Not in this change** block and the How key-flow diagram don't count toward the limit)
+- Content over the limit → move it to `design.md`, **don't stuff it into the proposal**
+- `## How` distills `research.md ## Decided`, doesn't copy it verbatim
+- **What / How must pass question ④ (cut it)**: before committing a non-trivial What item / How decision, ask "what happens if I remove it" and don't write what makes no difference removed (SKILL § Claim Self-Review) — this is the precondition for the HARD GATE change points to let the user judge "approve or not" at a glance
+
+## HARD GATE block sections (order is contract)
+
+The gate block emitted by `/spec:propose` / `/spec:revise` (full template in propose.md, mirrored in SKILL § HARD GATE flow — keep the two verbatim-identical) presents, in this order:
+
+1. `Escalated decisions` — **always first when present**, each line carrying its `(DEC-N)` from research.md `## Decided` (the stable ID the proposal view and pasted replies use; E-numbers shift between emissions) (irreversible-class provisional calls; they stand by default, silence + `/spec:apply` = consent, one reply line overturns; `/spec:apply` echoes them again at its first line)
+2. `Changes` — 3–6 key decisions, each a **same-scenario before/after mirror**: Problem / After / Cost, Problem and After ≤2 lines each; register test: a non-developer can tell what problem each point solves
+3. `Decided without asking` — factual + `auto` triage decisions, one line each + reversibility (mandatory line, "none" allowed)
+4. `Unsourced additions` — behavioral items with no valid R-N citation against the change's index.md, AND new carriers (fields / params / methods / endpoints / validations / defaults) with no C-N backing; declared C-N minting rows surface here for approval (mandatory line; "none" when all cite and every carrier reconciles, "legacy change (no index)" when the change predates the format)
+5. `Uncovered requirements` — index R-N entries no What item carries, one line each with the quote (mandatory line; "none" when the coverage matrix is clean, "legacy change (no index)" when the change predates the format)
+6. `Unresolved critique` — critique-panel findings still open after the one refutation round (they live as round-0 ledger findings)
+7. `Not in this change` — the approval boundary
+
+The user's reply is an evaluation: per-item adopt / refute (with reason) / partial, one response round, user final; insisted items are applied and ledger-marked `user-override`.
+
+**Persisted copy**: propose writes the complete block verbatim to `spec/changes/<name>/gate.md` (overwrite) BEFORE emitting it — nothing may follow the gate in the message — and `/spec:revise` replaces only the numbered Changes item it rewrites (keeping its number; a new decision takes the next number), keeping every other item. gate.md is what the proposal view renders the Changes layer from; escalated and auto decisions are rendered from their research.md DEC lines, so their DEC-N stays the stable ID across emissions.
+
+## HARD GATE approval marker
+
+The `<!-- APPROVED: YYYY-MM-DD HH:mm -->` marker is **appended automatically by `/spec:apply` before it runs** (treating the user's deliberate invocation as the act of approval).
+
+The timestamp uses the current ISO local time.
+
+This marker is simultaneously:
+- the contract `check-archive.sh` enforces at archive time (a change without it = flow bypassed) and `check-verify-reminder.sh` uses to detect the implementation window
+- an **audit record**: git log shows when it was approved
+
+(`check-gate.sh` deliberately does **not** require it — that hook fires before apply runs, and apply is what appends the marker; requiring it there would deadlock the flow.)
+
+**propose does not append APPROVED directly** — the HARD GATE is the user's decision point, and APPROVED is apply's contract action. Separating them spares the flow a redundant "reply go" step.
+
+## /spec:revise revisions
+
+Any revision MUST:
+
+1. Actively **remove the old `<!-- APPROVED: ... -->` marker** (any revision invalidates the old approval)
+2. Re-emit the HARD GATE after editing and wait for the user's decision
+3. When the user runs `/spec:apply`, apply appends the new APPROVED marker automatically (no "go" reply needed)
+
+If the old APPROVED isn't removed after a revise → apply sees a marker and won't append a fresh one, and status / check-archive treat the pre-revision approval as still valid — the approval audit trail lies about what was actually approved.
+
+## /spec:revise's editable sections
+
+| Parameter | Section edited |
+|---|---|
+| `why` | `## Why` |
+| `what` | `## What` |
+| `how` | `## How` |
+| `risk` | `## Risk` |
+
+On revise, **leave the other sections untouched** — edit only the named section (a full rewrite goes through `/spec:propose`).
+
+## Anti-patterns
+
+- ❌ Adding the APPROVED marker yourself during the HARD GATE wait, before any approval word
+- ❌ Keeping the old APPROVED when the user rejects / revises
+- ❌ `## How` copying `research.md ## Decided` verbatim (it should distill)
+- ❌ Stuffing content past the section limit (it should move to design.md)
+- ❌ Risk written as vague filler ("there may be a performance risk") without anchoring the trigger scenario / concrete hazard (SKILL Claim Self-Review question ③)
+- ❌ What listing "everything I can think of changing" without passing question ④'s cut (leaving the HARD GATE change points unjudgeable for approval)
+- ❌ A What item without a `verify:` clause (Completeness verification has nothing falsifiable to check)
+- ❌ A behavioral What item citing an R-N whose quote doesn't entail it (a mismatched ref is audited as unsourced — same finding as no ref)
+- ❌ Scope limits bolted on after APPROVED as extra HTML comments (they belong in **Not in this change**, re-gated via `/spec:revise what`)
+- ❌ Translated section headers (`## 为什么（Why）`) — headers are always the English canonical forms; prose follows the working language

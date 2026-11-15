@@ -1,0 +1,191 @@
+---
+name: spec-verify
+description: Verifies the current change by dispatching the independent spec-verifier agent (fresh context — the implementing conversation never audits itself) across four dimensions (Completeness / Correctness / Coherence incl. the charter sub-audit / Reuse & Conformance). Every run updates the verification ledger spec/changes/<name>/verify.md (stable finding IDs + round diffing + unfixed-escalation). With no spec (or --diff [range]) it runs diff mode: scope from git / svn / this conversation's edits, test points derived from the changed files, front- and back-end tests run, screenshots recorded, ledger at spec/archive/<date>-verify-<slug>/. Can be re-run independently.
+---
+<!-- GENERATED from core/commands/verify.md — edit the core file and run node tools/generate.mjs; hand edits will be overwritten -->
+
+# $spec-verify
+
+> Heterogeneous peer review (`--codex`) is not available in this port — Codex cannot be its own heterogeneous reviewer.
+
+Flags on this host: `--diff [range]` (diff mode, § Diff mode — forced even when a change exists) and `--view` (after the run, `$spec-view verify` renders the ledger page; diff mode: the record dir). **Any other token in the arguments is flagged to the user as a possible typo** — nothing is silently ignored.
+
+## Independent verifier (why verify dispatches an agent instead of reviewing inline)
+
+This section is change mode. Diff mode picks its executor by SKILL § Independent audit and briefs the verifier with the claim list and scope (§ Diff mode step 4).
+
+The conversation that just ran `$spec-apply` cannot audit its own output — same context, same blind spots, and "be objective" instructions have near-zero measured effect on self-preference. `$spec-verify` therefore **spawns the spec-verifier agent (defined in ~/.codex/agents/spec-verifier.toml)** (fresh context: it reads only proposal + design + charter + the diff) and keeps the bookkeeping for itself. The same rule binds `$spec-apply`'s closing verification: the review is ALWAYS performed by a spawned spec-verifier, whoever initiates it — the implementing conversation only ever does bookkeeping:
+
+0. **Agent freshness pre-check** (once per session): compare the shipped `${PLUGIN_ROOT}/agents/spec-verifier.toml` with `~/.codex/agents/spec-verifier.toml` — missing → copy + one-line notice; differs → one-line notice + ask once (sync / keep — never clobber a customized agent silently); identical → proceed. Codex cannot bundle agents; without this check a plugin upgrade leaves the OLD verifier running with no error
+1. Spawn spec-verifier with the change name and nothing else — its ignorance of the implementation process is the mechanism, don't "helpfully" brief it
+   (`spawn_agent` parameter contract: EITHER `message` — plain text only — OR `items` when attaching skill references, with the task text as a `{type:"text"}` item; both together is rejected)
+2. Transcribe its findings into ledger rows **without softening, dropping, or re-judging them** — format conversion only (one finding = one table row; severity / location / text preserved). Derive the per-dimension pass/fail lines from its findings; its `conclusion` is authoritative and may never be upgraded fail → pass. Disagreement is recorded as a note next to the row, never by deletion
+3. Run the round rules below (diff vs previous round, escalation)
+4. The user overrules a finding as a false positive → distill the generalized lesson (what pattern + why it's acceptable here) into the knowledge base as a `[ruling]` — a fact line in the rulings subdoc under `spec/knowledge/` with its index line maintained (format → references/knowledge-spec.md; never a flat line into the index) — so later rounds and later changes stop repeating it
+
+## Four-dimension verification framework (executed by the verifier — the spawned spec-verifier, or in diff mode the executor SKILL § Independent audit picks; runs in all modes)
+
+### 1. Completeness
+- Is every item in proposal `## What` implemented? **Check each item against its `verify:` clause** — that clause is the falsifiable acceptance check; a What item with no `verify:` clause → flag it explicitly, don't improvise a pass
+- Do inputs / outputs align with the interface contract (design.md, if present)?
+- Do tests cover the critical paths?
+
+### 2. Correctness
+- Does the code compile / pass type checks?
+- Do unit / integration tests pass?
+- Are edge cases (empty / extreme / invalid input) handled correctly?
+
+### 3. Coherence
+- Is the change consistent with the decisions in proposal `## How`?
+- **Nothing was done that the proposal did not ask for** (no scope creep)?
+- **Index anchor**: with `index.md` present, every behavioral addition in the diff (validation / required field / value range / permission / endpoint / schema element) must trace to a `refs:` R-N whose quoted text entails it — no citation or a mismatched one = unsourced addition; index absent (legacy change) → declare it and hunt additions against `## What` only
+- **`Not in this change` = exclusion zones**: code changes inside that scope → scope violation, flag it; conversely NEVER flag excluded scope as "missing work" — it is out of scope by decision
+- Does it conform to the coding conventions in the sdd spec-core skill's stack references?
+- **Charter audit** (see the dedicated section below): every fallback / degrade / compat path in the diff must trace to an explicit proposal `## How` / `## Risk` decision
+
+### 4. Reuse & Conformance
+- Each new class / shared util / shared component / page in the diff: does the host codebase already have an equivalent (grep by **responsibility**, not just name)? Does the dev summary's `New creations` field carry the A-N gap citation?
+- **Conformance (new files/pages by default)**: compare each NEW file against its designated E-N exemplar — or 1–2 nearest same-type files in this project when the index names none — on naming / component shape / styling approach / state & error idioms / API-call pattern. Findings need **dual citation** (project convention at file:line with ≥2 occurrences vs the change's deviation at file:line); the project's own code is the sole authority — generic stack references are not citations here, and **consistency outranks elegance** (a deviation toward an objectively cleaner pattern is still a finding; a deliberate convention change is a gate decision). Abstractions the exemplar lacks = additions; conventions it has that the file drops = findings
+- Index absent (legacy change) → declare it, flag blatant duplication only
+
+## Charter audit (part of Coherence — hunts the dirty-data defect class)
+
+Models rate defensive fallbacks as "robust"; the charter (`code-charter.md`) rates them as the number-one source of dirty data. This audit therefore never asks "is this fallback well-written?" — it asks "**which gate decision authorized it?**". Untraceable = finding, zero judgment calls.
+
+**Machine pass first**: `ast-grep scan --config <sdd-rules>/sgconfig.yml <changed files>` — resolve `<sdd-rules>` first (the installed sdd `spec-core/rules` directory; location depends on install method): `find ~/.codex/plugins/cache ~/.agents/skills -path '*spec-core/rules/sgconfig.yml' 2>/dev/null | sort | tail -1` (pwsh: `Get-ChildItem ~/.codex/plugins/cache, ~/.agents/skills -Recurse -Filter sgconfig.yml -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName`) — the shipped rule pack (`rules/dirty-data/`, validated: catches "return default in catch" even when a log line disguises it; never flags a proper throw) produces AST-level Evidence with no regex false positives. ast-grep not installed (`scoop install main/ast-grep` / `npm i -g @ast-grep/cli`) → declare `not run: ast-grep not installed` in Evidence and fall back to the manual patterns below. Java projects with a JVM can additionally run PMD's built-in EmptyCatchBlock (`pmd check --file-list changed.txt -R category/java/errorprone.xml`) with zero project changes.
+
+Manual patterns (fallback, Grep the changed files — patterns, not vibes):
+
+- catch blocks that swallow an error and return a default / continue, on any path that writes
+- "try new logic, fall back to old logic" branches; replaced code kept alive next to its replacement
+- `|| defaultValue` / ternary fallback chains that mask a failed lookup as a normal result
+- compat flags or branches defaulting to old behavior; "temporary" dual-write / dual-read
+- silent re-route: query A fails → quietly run query B and return its shape as if A succeeded
+- residual `DEVLOG:` tags in the diff (charter clause 8 — process markers not swept to function comments at wrap-up)
+
+Verdict rules:
+
+| Situation | Verdict |
+|---|---|
+| Pattern hit traces to an explicit `## How` / `## Risk` decision (quote it in the finding check) | Not a finding — but confirm it degrades **loudly** (log/alert per charter); silent even when authorized → finding |
+| Pattern hit with no decision behind it | Finding, severity **major** |
+| Same, on a data-write path (INSERT / UPDATE / message produce / file write) | Severity **critical** — this is how dirty data is born |
+
+The fix direction is **replacement or a gate decision** (`$spec-revise how` to authorize it deliberately) — never "keep the fallback but add a log line".
+
+## Output format
+
+```
+=== Verify ===
+[independent] Completeness: <pass/fail/partial> - <explanation>
+               Correctness:  <pass/fail/partial> - <explanation>
+               Coherence:    <pass/fail/partial> - <explanation> (incl. charter sub-audit)
+               Reuse&Conf:   <pass/fail/partial> - <explanation>
+
+Evidence (mandatory — one line per check actually executed):
+  <command / action> → <exit code or the key output line>
+  not run: <check> — <reason>        ← declaring a skip is legal; hiding it is not
+  pending live check: <item>         ← the live-acceptance list — checks that need the running
+                                       app or human eyes; one line each, handed to the user.
+                                       These are a handover, not findings: they NEVER hold
+                                       `conclusion: pass` hostage and never block archiving —
+                                       the machine-verifiable set must be green, the live set
+                                       belongs to the user's own acceptance run, and anything
+                                       that fails there comes back through $spec-fix
+
+Overall: <pass / fail>
+```
+
+**Correctness may be marked pass only when at least one Evidence line supports it**; nothing runnable in this environment → write `Correctness: not verifiable - <why>`, never pass.
+
+## Diff mode (no spec needed)
+
+**Trigger**: zero active changes → diff mode runs automatically; `--diff [range]` forces it even when a change exists; more than one active change and none selected → list them and ask which one to verify, offering diff mode as one option — never pick by guess, because a just-applied change silently skipped would lose its closing round.
+
+1. **Scope** — first detector that answers wins:
+   - `git rev-parse --show-toplevel` succeeds → git: changed set = `git diff --name-only --relative HEAD` plus untracked `git ls-files --others --exclude-standard` (plain diff misses new files; both list paths relative to the launch root, so the drop rule below and the batch comparison in step 7 compare like with like); hunks `git diff --relative HEAD -- <kept files>` (same base, flow paths stay out; an untracked kept file has no hunk — read it whole); changes outside the launch root are not in scope — the scope line counts them when `git diff --name-only HEAD` shows any; a given range is used as written (`A..B` compares the two trees, `A...B` diffs since the merge base)
+   - else `svn info --show-item=wc-root` prints a non-empty path (judge by stdout — the exit code outside a working copy is undocumented) → svn: changed set = `svn status` (`M A D R`, plus `?` unversioned — `svn diff` never shows those); hunks `svn diff` / `svn diff -r N:M`; `X` externals are listed as out of scope (`svn diff` does not descend into them)
+   - neither → the scope is the files this conversation edited; none → ask the user for paths. The scope line then says plainly that edits made outside this conversation are invisible
+   - **whichever detector answered, drop the flow's own paths** — `spec/changes/`, `spec/archive/`, `spec/knowledge/`, `spec/knowledge.md` under the launch root, and nothing else under `spec/` (RSpec and Jasmine keep real tests there): earlier records, fix ledgers and views are not the code under audit, and leaving them in makes step 7's batch comparison never match. The scope line names how many paths were dropped
+2. **Intent anchor** — first hit wins: the user's words (this conversation, the arguments) → the range's commit messages (`git log <range>` / `svn log -r N:M`) → none. None = diff-only: Completeness is not assessed and the record says so (SKILL § Independent audit)
+3. **Test points** — runner sanity first (a skipTests-style config makes every green run vacuous: name it if found); then changed file → related tests: jest `--findRelatedTests <files>`, vitest `related <files> --run`; elsewhere the naming conventions (pytest `test_<mod>.py` / `<mod>_test.py`, Maven surefire `*Test.java` with `-Dtest=`, Gradle `--tests`); then each touched stack's full suite once as the regression net (static selection misses dynamic imports and reflection) — cannot run it → `not run: full suite — <reason>`. Checks follow $spec-apply's three-tier order: tests → seam mocks → live items handed over, never waited on
+4. **Executor + audit contract** — SKILL § Independent audit; a dispatched spec-verifier gets the intent lines as its claim list and the scope from step 1
+5. **Screens** — a UI-touching diff gets its own record line regardless of Completeness: captures (spec-verifier's capture path) into the record's `screens/` + `screens.md`, or `screens: pending live check — <page list>` when the app is not running
+6. **Record** — `spec/archive/<YYYY-MM-DD>-verify-<slug>/verify.md` (+ `screens/`); an existing dir gets a counter suffix (`-2`, `-3`, …), never an overwrite. Never under `spec/changes/` — a dir there counts as an active change and trips the gates. Same ledger format below, with `mode: diff` in place of `change:` and two lines before `## Findings`: `scope: <git|svn|conversation> <range or working tree> — <files>` and `intent: <user words|commits|none> — <one line>`
+7. **Fix-batch overlap** — the changed files are exactly an open fix batch's entries → say so and recommend `$spec-ship` instead: one diff gets one audit
+
+Diff mode audits and records only — it never archives, ships, or edits a fix batch.
+
+## Verification ledger: `spec/changes/<name>/verify.md` (written every run; diff mode: the record's `verify.md`, § Diff mode step 6)
+
+A stateless verify can pass the same broken change twice. Every run therefore writes/updates a ledger in the change directory (diff mode: in its record dir) — findings carry stable IDs, and the next round must face every still-open one before it may conclude.
+
+The ledger has **two writers, one table**: `$spec-propose`'s critique panel opens it with round 0 (stage: propose, pre-code findings), and `$spec-verify` owns every round after — so the round narrative runs unbroken from before the gate to acceptance, and `$spec-status` derives the milestone view from it without any extra file.
+
+Format (YAML frontmatter + findings table):
+
+```markdown
+---
+change: <name>
+round: <N>                 # increments each run
+date: YYYY-MM-DD
+conclusion: pass | fail
+issues: { critical: <N>, major: <N>, minor: <N>, open: <N> }
+---
+
+# Verify: <name>
+
+## Findings
+| ID | Severity | Location | Finding | Status | Rounds |
+|----|----------|----------|---------|--------|--------|
+| V-1 | critical | file:line | <one line> | open / fixed(rN) / wontfix: <reason> | r1→r2 |
+
+## Evidence (round N)
+<command> → <exit code / key output>
+not run: <check> — <reason>
+```
+
+Round rules:
+1. **Read the previous ledger first** (if present): this run's `round` = previous + 1. **Round 0 is legal**: `$spec-propose`'s critique panel writes its surviving findings as round 0 (stage: propose) before any code exists — the first verify run is then round 1, and it re-checks round 0's open findings like any others
+   - **Fix-round scoping**: when a round exists only to re-check fixes (no new implementation since the last full pass), the verifier's scope is the still-open findings + the fix diff — NOT a fresh full four-dimension pass over the whole change (a full re-pass over unchanged code is a measured pure duplicate). A full pass is warranted only when new implementation landed since the last one
+2. **Re-check every Status=open finding one by one** — fixed → `fixed(rN)`; still open → stays open and **escalates**: a critical/major finding open for 2+ rounds forces `conclusion: fail` and leads the user-facing output
+3. New findings take the next V-N ID; IDs are never reused or renumbered
+4. `wontfix` requires a written reason (inside `Not in this change` / explicit user decision) — silence is not a status
+5. Keep the latest round's Evidence in full; collapse earlier rounds' Evidence to one line each
+6. **User-sourced findings**: acceptance-stage user evaluations enter the ledger too — after the per-item adopt/refute/partial response (one round; the user has the final say), each accepted or insisted-on item becomes a finding row with the next V-N ID and `source: user` noted in the Finding column; an item applied over your refutation is additionally marked `user-override`. They then drive the next fix round exactly like verifier findings. A user-overruled false positive still follows rule 4 (distill the lesson into the knowledge base)
+
+The user-facing output ends with the round summary:
+
+```
+Ledger: verify.md round <N> — fixed <X> · still open <Y> (escalated: <IDs>) · new <Z>
+```
+
+## Failure triage (locate the problem; do not prescribe a fix)
+
+When the review fails, **report the specific failure point**:
+
+| Failing dimension | Report content |
+|---|---|
+| Completeness | List unimplemented items from proposal `## What`; list interfaces in design.md that are not aligned |
+| Correctness | Paste the exact error + file / line number; failing test case + expected vs. actual |
+| Coherence | Where the change diverges from `## How`; scope creep; violations of stack conventions |
+| Reuse & Conformance | The new creation + the existing equivalent it duplicates (file:line), or the E-N exemplar / nearest-neighbor convention dropped (dual citation), or the missing A-N gap citation |
+
+**Guiding principle**: describe the problem; do not prescribe the fix — the remediation path is for the user / main conversation to decide.
+
+## Anti-Cheating
+
+- **NEVER mark a test pass if it was not actually run** — reading the code with your eyes does not count as a Correctness pass
+- **The dev agent's self-reported Evidence is a claim, not proof** — spec-verifier re-runs the key commands itself (Iron Law: no pass without fresh verification evidence)
+- partial MUST specify what is partial — a vague "basically passed" is NEVER acceptable
+
+## Stuck Protection
+
+- If verify cycles through review without converging → stop and report; NEVER loop endlessly
+
+## What this command does NOT do
+
+- Does not proactively recommend "which command to run next" — that is `$spec-status`'s job; verify only reports
+- Does not modify project source (the one file it always writes is the verification ledger `spec/changes/<name>/verify.md` — diff mode: `spec/archive/<date>-verify-<slug>/verify.md`; source modification is `$spec-apply`'s job)
+- Does not modify proposal (`$spec-revise`'s job)
+- Does not archive (`$spec-archive`'s job)

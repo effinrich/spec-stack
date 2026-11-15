@@ -1,0 +1,750 @@
+#!/bin/sh
+# Shared fixture runner for the SDD Codex gates -- the sync contract between the pwsh and
+# sh twins: every case is fed (same stdin JSON, same project state) to BOTH implementations
+# and both must produce the same verdict (block / allow). Run after ANY gate edit.
+#
+#   sh codex/hooks/run-fixtures.sh
+#
+# Requires: sh + coreutils. The ps1 twin runs through its production entry: on Windows that
+# is powershell.exe + hook-launcher.ps1 (delegates to pwsh when found, else runs the twin
+# in-process under 5.1) -- run once with pwsh on PATH and once without to cover both paths.
+# Elsewhere it is pwsh directly; with neither available the ps1 twin is skipped with a
+# warning -- but a gate edit is only DONE when both twins pass.
+
+set -u
+HOOKS_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+TMP_ROOT="${TMPDIR:-/tmp}/sdd-codex-fixtures-$$"
+mkdir -p "$TMP_ROOT"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+# On Git Bash/MSYS, pwsh cannot resolve /tmp-style paths -- convert to C:/-style so the
+# same cwd works for both twins
+command -v cygpath >/dev/null 2>&1 && TMP_ROOT=$(cygpath -m "$TMP_ROOT")
+
+PS1_ENTRY=""
+if command -v powershell.exe >/dev/null 2>&1; then PS1_ENTRY=launcher
+elif command -v pwsh >/dev/null 2>&1; then PS1_ENTRY=pwsh; fi
+HOOKS_DIR_NATIVE=$HOOKS_DIR
+command -v cygpath >/dev/null 2>&1 && HOOKS_DIR_NATIVE=$(cygpath -m "$HOOKS_DIR")
+case "$PS1_ENTRY" in
+    launcher) echo "INFO: ps1 twins via powershell.exe launcher -- $(powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$HOOKS_DIR_NATIVE/hook-launcher.ps1" --probe | tr -d '\r')"
+              echo "      (cover the other path too: with pwsh reachable -> delegate; LOCALAPPDATA=<empty dir> and no pwsh on PATH -> 5.1)" ;;
+    pwsh)     echo "INFO: ps1 twins via pwsh" ;;
+    *)        echo "WARN: neither powershell.exe nor pwsh found -- testing sh twins only (NOT a full pass)" ;;
+esac
+# run_ps1 <hook-basename> -- stdin passes through; same entry Codex uses on this platform
+run_ps1() {
+    if [ "$PS1_ENTRY" = launcher ]; then
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$HOOKS_DIR_NATIVE/hook-launcher.ps1" "$HOOKS_DIR_NATIVE/$1.ps1"
+    else
+        pwsh -NoProfile -NonInteractive -File "$HOOKS_DIR/$1.ps1"
+    fi
+}
+
+PASS=0
+FAIL=0
+
+# run_case <name> <hook-basename> <expected: block|allow> <stdin-json>
+run_case() {
+    name=$1; hook=$2; expected=$3; stdin=$4
+
+    for impl in sh ps1; do
+        [ "$impl" = "ps1" ] && [ -z "$PS1_ENTRY" ] && continue
+        if [ "$impl" = "sh" ]; then
+            out=$(printf '%s' "$stdin" | sh "$HOOKS_DIR/$hook.sh" 2>/dev/null)
+        else
+            out=$(printf '%s' "$stdin" | run_ps1 "$hook" 2>/dev/null)
+        fi
+        case "$out" in
+            *'"decision":"block"'*|*'"decision": "block"'*) got=block ;;
+            '') got=allow ;;
+            *) got="unexpected-output" ;;
+        esac
+        if [ "$got" = "$expected" ]; then
+            PASS=$((PASS+1))
+            echo "PASS  $name [$impl]"
+        else
+            FAIL=$((FAIL+1))
+            echo "FAIL  $name [$impl]  expected=$expected got=$got"
+            [ -n "$out" ] && echo "      stdout: $out"
+        fi
+    done
+}
+
+# mkproj <subdir> -> creates a project skeleton, echoes its path
+mkproj() {
+    p="$TMP_ROOT/$1"
+    mkdir -p "$p/spec/changes"
+    printf '%s' "$p"
+}
+
+json() {
+    # json <cwd> <prompt-with-\n-as-literal-backslash-n> [extra]
+    printf '{"session_id":"s","turn_id":"t","transcript_path":null,"cwd":"%s","hook_event_name":"UserPromptSubmit","model":"m","permission_mode":"default","prompt":"%s"%s}' "$1" "$2" "${3:-}"
+}
+json_stop() {
+    # json_stop <cwd> <stop_hook_active: true|false>
+    printf '{"session_id":"s","turn_id":"t","transcript_path":null,"cwd":"%s","hook_event_name":"Stop","model":"m","permission_mode":"default","stop_hook_active":%s,"last_assistant_message":"done"}' "$1" "$2"
+}
+
+FULL_PROPOSAL='# Proposal: x
+
+## Why
+w
+
+## What
+- item | verify: v
+
+## How
+h
+
+## Risk
+r
+'
+
+# ---- check-gate ----
+P=$(mkproj gate-no-changes-dir); rm -rf "$P/spec"
+run_case gate-no-spec-dir          check-gate block "$(json "$P" '$spec-apply')"
+
+P=$(mkproj gate-no-active)
+run_case gate-no-active-change     check-gate block "$(json "$P" '$spec-apply')"
+
+P=$(mkproj gate-no-proposal); mkdir -p "$P/spec/changes/my-change"
+run_case gate-missing-proposal     check-gate block "$(json "$P" '$spec-apply')"
+
+P=$(mkproj gate-partial); mkdir -p "$P/spec/changes/my-change"
+printf '## Why\nw\n\n## What\nx\n' > "$P/spec/changes/my-change/proposal.md"
+run_case gate-missing-sections     check-gate block "$(json "$P" '$spec-apply')"
+
+P=$(mkproj gate-ok); mkdir -p "$P/spec/changes/my-change"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/my-change/proposal.md"
+run_case gate-happy-path           check-gate allow "$(json "$P" '$spec-apply')"
+run_case gate-mention-not-invoke   check-gate allow "$(json "$P" 'what does $spec-apply do?')"
+run_case gate-invoke-second-line   check-gate block "$(json "$(mkproj gate-2nd)" 'some context\n$spec-apply')"
+
+P=$(mkproj gate-multi); mkdir -p "$P/spec/changes/a" "$P/spec/changes/b"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/a/proposal.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/b/proposal.md"
+run_case gate-multiple-changes     check-gate block "$(json "$P" '$spec-apply')"
+
+# ---- check-tbd ----
+P=$(mkproj tbd-open); mkdir -p "$P/spec/changes/c"
+printf '# R\n\n## Open [TBD]\n- [TBD-1] pick one\n\n## Decided\n(none)\n' > "$P/spec/changes/c/research.md"
+run_case tbd-open-blocks           check-tbd block "$(json "$P" '$spec-propose')"
+
+P=$(mkproj tbd-clear); mkdir -p "$P/spec/changes/c"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/c/research.md"
+run_case tbd-decided-only-allows   check-tbd allow "$(json "$P" '$spec-propose')"
+run_case tbd-mention-not-invoke    check-tbd allow "$(json "$P" 'explain $spec-propose please')"
+
+# regression: [TBD-N] provenance citations OUTSIDE ## Open (Practices/Constraints) must not block
+P=$(mkproj tbd-prov); mkdir -p "$P/spec/changes/c"
+printf '# R\n\n## Practices\n- pattern X (drove [TBD-1])\n\n## Constraints\n- limit Y, see [TBD-2]\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/c/research.md"
+run_case tbd-provenance-ref-allows check-tbd allow "$(json "$P" '$spec-propose')"
+
+# /spec:ask persists crafted questions as indented sub-lines under their [TBD-N]; sub-lines carry no
+# token, so a live entry still blocks once and leftover sub-lines alone never block
+P=$(mkproj tbd-sublines-only); mkdir -p "$P/spec/changes/c"
+printf '# R\n\n## Open [TBD]\n  - Q: stale scenario stem\n  - 1: fast / extra dependency\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/c/research.md"
+run_case tbd-open-only-sublines-allows check-tbd allow "$(json "$P" '$spec-propose')"
+
+P=$(mkproj tbd-live-sublines); mkdir -p "$P/spec/changes/c"
+printf '# R\n\n## Open [TBD]\n- [TBD-1] pick one | candidates: a / b | select: one\n  - Q: when a user saves twice, which copy wins?\n  - 1: simple / stale reads\n  - 2: consistent / extra hop\n\n## Decided\n(none)\n' > "$P/spec/changes/c/research.md"
+run_case tbd-live-with-sublines-blocks check-tbd block "$(json "$P" '$spec-propose')"
+
+# /spec:verify diff-mode records live under spec/archive/ — they must never count as an active change:
+# with one real active change present, check-tbd tells the placements apart (under archive → still a
+# single active change → allow; misplaced under spec/changes/ → two active, no pointer → block)
+P=$(mkproj verify-record-only); mkdir -p "$P/spec/archive/2026-11-05-verify-login-fix"
+mkdir -p "$P/spec/changes/c"; printf '# R
+
+## Open [TBD]
+(none)
+
+## Decided
+(none)
+' > "$P/spec/changes/c/research.md"
+printf -- '---\nmode: diff\nround: 1\nconclusion: pass\n---\n' > "$P/spec/archive/2026-11-05-verify-login-fix/verify.md"
+run_case verify-record-only-gates-unchanged check-tbd allow "$(json "$P" '$spec-propose')"
+
+# ---- check-archive ----
+P=$(mkproj arch-unapproved); mkdir -p "$P/spec/changes/c"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+run_case archive-no-approved       check-archive block "$(json "$P" '$spec-archive')"
+run_case archive-force-overrides   check-archive allow "$(json "$P" '$spec-archive force')"
+
+# V-1 regression: "force" as a word in the cwd PATH (not the prompt) must NOT trigger the override
+P=$(mkproj arch-force-dir/proj); mkdir -p "$P/spec/changes/c"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+run_case archive-force-in-cwd-blocks check-archive block "$(json "$P" '$spec-archive')"
+
+P=$(mkproj arch-ok); mkdir -p "$P/spec/changes/c"
+printf '%s\n<!-- APPROVED: 2026-07-08 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+run_case archive-approved-allows   check-archive allow "$(json "$P" '$spec-archive')"
+
+P=$(mkproj arch-tasks); mkdir -p "$P/spec/changes/c"
+printf '%s\n<!-- APPROVED: 2026-07-08 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+printf '# Tasks\n- [ ] 1. unfinished\n' > "$P/spec/changes/c/tasks.md"
+run_case archive-unchecked-tasks   check-archive block "$(json "$P" '$spec-archive')"
+
+# ---- check-verify-reminder (Stop) ----
+P=$(mkproj rem-nudge); mkdir -p "$P/spec/changes/c"
+printf '%s\n<!-- APPROVED: 2026-07-08 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+run_case reminder-nudges           check-verify-reminder block "$(json_stop "$P" false)"
+run_case reminder-loop-guard       check-verify-reminder allow "$(json_stop "$P" true)"
+
+P=$(mkproj rem-ledger); mkdir -p "$P/spec/changes/c"
+printf '%s\n<!-- APPROVED: 2026-07-08 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+printf -- '---\nround: 1\nconclusion: pass\n---\n# ledger\n' > "$P/spec/changes/c/verify.md"
+run_case reminder-ledger-satisfied check-verify-reminder allow "$(json_stop "$P" false)"
+
+# 0.4.x regression guard: a round-0 (propose-stage critique) ledger must NOT satisfy the
+# reminder -- the implementation window still needs its own verification round
+P=$(mkproj rem-round0); mkdir -p "$P/spec/changes/c"
+printf '%s\n<!-- APPROVED: 2026-07-08 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+printf -- '---\nround: 0\nstage: propose\nconclusion: pass\n---\n# ledger\n' > "$P/spec/changes/c/verify.md"
+run_case reminder-round0-nudges    check-verify-reminder block "$(json_stop "$P" false)"
+
+P=$(mkproj rem-unapproved); mkdir -p "$P/spec/changes/c"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/c/proposal.md"
+run_case reminder-not-approved     check-verify-reminder allow "$(json_stop "$P" false)"
+
+# ---- loop-driver (Stop DRIVER — reinject = {"decision":"block",...}, notice =
+#       {"systemMessage":...} without decision, quiet = empty stdout; contract re-probed
+#       on codex-cli 0.144.3, see SCHEMA.md "Stop re-injection") ----
+
+LOOP_RUNNING='---
+goal: g
+status: running
+max_rounds: 10
+---
+# Loop: g
+
+## Acceptance
+- [ ] A-1 thing (verify: x)
+- [x] A-2 done (verify: y)
+
+## Rounds
+### Round 1
+#### Plan
+p
+#### Retrospect
+lesson; next A-1
+
+## Lessons
+'
+
+# run_driver_case <name> <expected: reinject|notice|quiet> <project> <state: - = none> <stdin> [require] [forbid]
+# The state file is reset before EACH twin so both implementations see identical input.
+run_driver_case() {
+    name=$1; expected=$2; proj=$3; state=$4; stdin=$5; require=${6:-}; forbid=${7:-}
+    sdir="$proj/spec/changes/g"
+    for impl in sh ps1; do
+        [ "$impl" = "ps1" ] && [ -z "$PS1_ENTRY" ] && continue
+        if [ "$state" = "-" ]; then rm -f "$sdir/.loop-state" 2>/dev/null
+        else printf '%s' "$state" > "$sdir/.loop-state"; fi
+        if [ "$impl" = "sh" ]; then
+            out=$(printf '%s' "$stdin" | sh "$HOOKS_DIR/loop-driver.sh" 2>/dev/null)
+        else
+            out=$(printf '%s' "$stdin" | run_ps1 loop-driver 2>/dev/null)
+        fi
+        code=$?
+        if [ "$code" -ne 0 ]; then got="exit-$code"
+        else
+            case "$out" in
+                *'"decision":"block"'*) got=reinject ;;
+                '')                     got=quiet ;;
+                *'"systemMessage"'*)    got=notice ;;
+                *)                      got=unexpected-output ;;
+            esac
+        fi
+        if [ -n "$forbid" ]; then
+            case "$out" in *"$forbid"*) got=forbidden-leak ;; esac
+        fi
+        if [ -n "$require" ] && [ "$got" = "$expected" ]; then
+            case "$out" in *"$require"*) : ;; *) got="missing-required-text" ;; esac
+        fi
+        if [ "$got" = "$expected" ]; then
+            PASS=$((PASS+1)); echo "PASS  $name [$impl]"
+        else
+            FAIL=$((FAIL+1)); echo "FAIL  $name [$impl]  expected=$expected got=$got"
+            [ -n "$out" ] && echo "      stdout: $out" | head -2
+        fi
+    done
+}
+
+# run_assert <name> <shell-function> — generic named assertion, participates in name sync.
+run_assert() {
+    name=$1; fn=$2
+    if "$fn" >/dev/null 2>&1; then
+        PASS=$((PASS+1)); echo "PASS  $name"
+    else
+        FAIL=$((FAIL+1)); echo "FAIL  $name  (assertion function $fn returned nonzero)"
+    fi
+}
+
+P=$(mkproj loop-none); mkdir -p "$P/spec/changes/g"
+run_driver_case loop-no-ledger-quiet quiet "$P" - "$(json_stop "$P" false)"
+
+P=$(mkproj loop-paused); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^status: running/status: paused/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-paused-quiet quiet "$P" - "$(json_stop "$P" false)"
+
+P=$(mkproj loop-cont); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" > "$P/spec/changes/g/loop.md"
+run_driver_case loop-continue-reinjects reinject "$P" - "$(json_stop "$P" false)"
+run_driver_case loop-session-mismatch-quiet quiet "$P" 'session_id=OTHER
+rounds_injected=0
+retro_reinjects=0
+checked_history=
+tree_fp_history=
+' "$(json_stop "$P" false)"
+run_driver_case loop-round-cap-notice notice "$P" 'session_id=s
+rounds_injected=10
+retro_reinjects=0
+checked_history=1,1
+tree_fp_history=na,na
+' "$(json_stop "$P" false)"
+run_driver_case loop-no-progress-fuse-notice notice "$P" 'session_id=s
+rounds_injected=4
+retro_reinjects=0
+checked_history=1,1,1
+tree_fp_history=na,na,na
+' "$(json_stop "$P" false)"
+
+P=$(mkproj loop-retro); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^lesson; next A-1$//' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-retro-missing-reinjects reinject "$P" - "$(json_stop "$P" false)"
+run_driver_case loop-retro-refusal-notice notice "$P" 'session_id=s
+rounds_injected=1
+retro_reinjects=2
+checked_history=1
+tree_fp_history=na
+' "$(json_stop "$P" false)"
+
+P=$(mkproj loop-done); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^- \[ \] A-1 thing (verify: x)$/- [x] A-1 thing (verify: x)/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-acceptance-met-reinjects reinject "$P" - "$(json_stop "$P" false)"
+
+P=$(mkproj loop-corrupt); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^max_rounds: 10$/max_rounds: ten/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-corrupt-max-rounds-notice notice "$P" - "$(json_stop "$P" false)"
+
+# V-7 invariant pin: a loop change dir (no proposal.md) must never wake the verify reminder
+P=$(mkproj loop-remind); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" > "$P/spec/changes/g/loop.md"
+run_case loop-dir-reminder-allows  check-verify-reminder allow "$(json_stop "$P" false)"
+
+# V-11 canary — now a framework case (forbid arg), so the scenario-name sync guard sees it
+P=$(mkproj loop-escape); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^goal: g$/goal: EVILCANARY"quote\\\\backslash/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-json-escaping-canary reinject "$P" - "$(json_stop "$P" false)" '' EVILCANARY
+
+# ---- 0.5.1 hardening cases (names mirrored on the Claude side) ----
+
+P=$(mkproj loop-comment); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed -e 's/^status: running$/status: running        # running | paused | done | aborted/' \
+    -e 's/^max_rounds: 10$/max_rounds: 10         # plain integer/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-commented-frontmatter-reinjects reinject "$P" - "$(json_stop "$P" false)"
+
+P=$(mkproj loop-fuse0); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^max_rounds: 10$/max_rounds: 10\nno_progress_fuse: 0/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-fuse-zero-corrupt-notice notice "$P" - "$(json_stop "$P" false)" 'no_progress_fuse must be an integer'
+
+P=$(mkproj loop-noacc); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^## Acceptance$/## Goals/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-acceptance-missing-corrupt-notice notice "$P" - "$(json_stop "$P" false)" 'no checkbox found'
+
+P=$(mkproj loop-headvar); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^## Acceptance$/## Acceptance Criteria/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-heading-variant-corrupt-notice notice "$P" - "$(json_stop "$P" false)" 'no checkbox found'
+
+P=$(mkproj loop-dupacc); mkdir -p "$P/spec/changes/g"
+{ printf '%s' "$LOOP_RUNNING" | sed 's/^- \[ \] A-1 thing (verify: x)$/- [x] A-1 thing (verify: x)/'
+  printf '## Acceptance\n- [ ] FAKE quoted item (verify: x)\n'; } > "$P/spec/changes/g/loop.md"
+run_driver_case loop-dup-acceptance-reinjects reinject "$P" - "$(json_stop "$P" false)" 'final acceptance'
+
+P=$(mkproj loop-capdone); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed 's/^- \[ \] A-1 thing (verify: x)$/- [x] A-1 thing (verify: x)/' > "$P/spec/changes/g/loop.md"
+run_driver_case loop-cap-boundary-acceptance-reinjects reinject "$P" 'session_id=s
+rounds_injected=10
+retro_reinjects=0
+checked_history=2,2
+tree_fp_history=na,na
+' "$(json_stop "$P" false)" 'final acceptance'
+run_driver_case loop-over-cap-acceptance-notice notice "$P" 'session_id=s
+rounds_injected=11
+retro_reinjects=0
+checked_history=2,2,2
+tree_fp_history=na,na,na
+' "$(json_stop "$P" false)" 'max_rounds reached'
+
+# DEC-7: fingerprint includes HEAD — verified for BOTH twins (each computes its own format)
+assert_head_fp_changes() {
+    for impl in sh ps1; do
+        [ "$impl" = "ps1" ] && [ -z "$PS1_ENTRY" ] && continue
+        gp="$TMP_ROOT/git-real-$impl"; rm -rf "$gp"; mkdir -p "$gp/spec/changes/g"
+        printf '%s' "$LOOP_RUNNING" > "$gp/spec/changes/g/loop.md"
+        ( cd "$gp" && git init -q && git add -A && git -c user.email=f@x -c user.name=f commit -qm i ) || return 1
+        if [ "$impl" = "sh" ]; then
+            printf '%s' "$(json_stop "$gp" false)" | sh "$HOOKS_DIR/loop-driver.sh" >/dev/null 2>&1
+        else
+            printf '%s' "$(json_stop "$gp" false)" | run_ps1 loop-driver >/dev/null 2>&1
+        fi
+        ( cd "$gp" && git -c user.email=f@x -c user.name=f commit -qm r2 --allow-empty ) || return 1
+        if [ "$impl" = "sh" ]; then
+            printf '%s' "$(json_stop "$gp" false)" | sh "$HOOKS_DIR/loop-driver.sh" >/dev/null 2>&1
+        else
+            printf '%s' "$(json_stop "$gp" false)" | run_ps1 loop-driver >/dev/null 2>&1
+        fi
+        f2=$(sed -n 's/^tree_fp_history=//p' "$gp/spec/changes/g/.loop-state")
+        case "$f2" in *,*) : ;; *) return 1 ;; esac
+        last=${f2##*,}; prev=${f2%,*}; prev=${prev##*,}
+        [ "$last" != "na" ] && [ "$prev" != "na" ] && [ "$last" != "$prev" ] || return 1
+    done
+    return 0
+}
+run_assert loop-git-head-fingerprint-changes assert_head_fp_changes
+
+# DEC-4: check-archive understands loop changes — done+fully-checked passes, running blocks
+P=$(mkproj arch-loop-done); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed -e 's/^status: running$/status: done/' \
+    -e 's/^- \[ \] A-1 thing (verify: x)$/- [x] A-1 thing (verify: x)/' > "$P/spec/changes/g/loop.md"
+run_case archive-loop-done-allows   check-archive allow "$(json "$P" '$spec-archive')"
+P=$(mkproj arch-loop-run); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" > "$P/spec/changes/g/loop.md"
+run_case archive-loop-running-blocks check-archive block "$(json "$P" '$spec-archive')"
+run_case archive-loop-force-overrides check-archive allow "$(json "$P" '$spec-archive force')"
+
+# ---- 0.5.6 flow-elasticity: .paused / quick.md skip filters + archive quick branch
+#      (names mirrored on the Claude side; the reverse sync guard there enforces it) ----
+
+P=$(mkproj flex-paused-active); mkdir -p "$P/spec/changes/parked" "$P/spec/changes/live"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/parked/proposal.md"
+printf 'paused: 2026-08-22 | reason: test\n' > "$P/spec/changes/parked/.paused"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+run_case gate-paused-plus-active-allows check-gate allow "$(json "$P" '$spec-apply')"
+
+P=$(mkproj flex-paused-only); mkdir -p "$P/spec/changes/parked"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/parked/proposal.md"
+printf 'paused: 2026-08-22 | reason: test\n' > "$P/spec/changes/parked/.paused"
+run_case gate-only-paused-blocks   check-gate block "$(json "$P" '$spec-apply')"
+
+P=$(mkproj flex-quick-active); mkdir -p "$P/spec/changes/hotfix" "$P/spec/changes/live"
+printf '# Quick: hotfix\n\nstatus: in-flight\n\n## Ask\n> q\n' > "$P/spec/changes/hotfix/quick.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+run_case gate-quick-plus-active-allows check-gate allow "$(json "$P" '$spec-apply')"
+
+P=$(mkproj flex-upgraded); mkdir -p "$P/spec/changes/grown"
+printf '# Quick: grown\n\nstatus: done\n' > "$P/spec/changes/grown/quick.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/grown/proposal.md"
+run_case gate-upgraded-quick-counts check-gate allow "$(json "$P" '$spec-apply')"
+
+P=$(mkproj flex-tbd); mkdir -p "$P/spec/changes/parked" "$P/spec/changes/live"
+printf 'paused: 2026-08-22 | reason: test\n' > "$P/spec/changes/parked/.paused"
+printf '# R\n\n## Open [TBD]\n- [TBD-9] x\n' > "$P/spec/changes/parked/research.md"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/live/research.md"
+run_case tbd-paused-plus-active-allows check-tbd allow "$(json "$P" '$spec-propose')"
+
+P=$(mkproj flex-rem-paused); mkdir -p "$P/spec/changes/parked"
+printf '%s\n<!-- APPROVED: 2026-08-22 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/parked/proposal.md"
+printf 'paused: 2026-08-22 | reason: test\n' > "$P/spec/changes/parked/.paused"
+run_case reminder-paused-skipped-allows check-verify-reminder allow "$(json_stop "$P" false)"
+
+P=$(mkproj flex-rem-quick); mkdir -p "$P/spec/changes/hotfix" "$P/spec/changes/live"
+printf '# Quick: hotfix\n\nstatus: in-flight\n' > "$P/spec/changes/hotfix/quick.md"
+printf '%s\n<!-- APPROVED: 2026-08-22 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+run_case reminder-quick-coexist-nudges check-verify-reminder block "$(json_stop "$P" false)"
+
+QUICK_DONE='# Quick: h
+
+status: done
+date: 2026-08-22
+
+## Ask
+> fix the label
+
+## Done
+- x
+
+## Concerns
+none
+
+## Evidence
+verifier: grep -> 0 findings
+'
+P=$(mkproj flex-arch-qdone); mkdir -p "$P/spec/changes/h"
+printf '%s' "$QUICK_DONE" > "$P/spec/changes/h/quick.md"
+run_case archive-quick-done-allows check-archive allow "$(json "$P" '$spec-archive')"
+
+P=$(mkproj flex-arch-qflight); mkdir -p "$P/spec/changes/h"
+printf '%s' "$QUICK_DONE" | sed 's/^status: done$/status: in-flight/' > "$P/spec/changes/h/quick.md"
+run_case archive-quick-inflight-blocks check-archive block "$(json "$P" '$spec-archive')"
+run_case archive-quick-force-overrides check-archive allow "$(json "$P" '$spec-archive force')"
+
+P=$(mkproj flex-arch-upg); mkdir -p "$P/spec/changes/grown"
+printf '%s' "$QUICK_DONE" > "$P/spec/changes/grown/quick.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/grown/proposal.md"
+run_case archive-upgraded-quick-audits-approved check-archive block "$(json "$P" '$spec-archive')"
+
+# ---- fix stream tier (0.6.0) ----
+
+P=$(mkproj fix-active); mkdir -p "$P/spec/changes/fixes" "$P/spec/changes/live"
+printf '# Fixes\n\nstatus: open\n\n## F-1: x\n\n### Ask\n> q\n' > "$P/spec/changes/fixes/fix.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/live/research.md"
+run_case gate-fix-plus-active-allows check-gate allow "$(json "$P" '$spec-apply')"
+run_case tbd-fix-plus-active-allows check-tbd allow "$(json "$P" '$spec-propose')"
+
+P=$(mkproj fix-rem); mkdir -p "$P/spec/changes/fixes" "$P/spec/changes/live"
+printf '# Fixes\n\nstatus: open\n\n## F-1: x\n' > "$P/spec/changes/fixes/fix.md"
+printf '%s\n<!-- APPROVED: 2026-08-24 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+run_case reminder-fix-coexist-nudges check-verify-reminder block "$(json_stop "$P" false)"
+
+# ship preconditions: first-ship deadlock canary -- the gate must NEVER require status: shipped
+P=$(mkproj fix-ship-none)
+run_case ship-no-batch-blocks check-archive block "$(json "$P" '$spec-ship')"
+
+P=$(mkproj fix-ship-empty); mkdir -p "$P/spec/changes/fixes"
+printf '# Fixes\n\nstatus: open\n' > "$P/spec/changes/fixes/fix.md"
+run_case ship-empty-batch-blocks check-archive block "$(json "$P" '$spec-ship')"
+
+FIX_OPEN='# Fixes
+
+status: open
+opened: 2026-08-24
+
+## F-1: fix the label
+date: 2026-08-24
+files: src/a.js
+
+### Ask
+> fix it
+
+### Root cause
+wrong key
+
+### Self-check
+npm test -> exit 0
+
+### Concerns
+none
+'
+P=$(mkproj fix-ship-ok); mkdir -p "$P/spec/changes/fixes"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/fix.md"
+run_case ship-with-entries-allows check-archive allow "$(json "$P" '$spec-ship')"
+
+P=$(mkproj fix-ship-upg); mkdir -p "$P/spec/changes/fixes"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/fix.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/fixes/proposal.md"
+run_case ship-upgraded-fixes-blocks check-archive block "$(json "$P" '$spec-ship')"
+
+FIX_SHIPPED='# Fixes
+
+status: shipped
+opened: 2026-08-24
+
+## F-1: fix the label
+date: 2026-08-24
+files: src/a.js
+
+### Ask
+> fix it
+
+### Root cause
+wrong key
+
+### Self-check
+npm test -> exit 0
+
+### Concerns
+none
+
+## Audit
+verifier round: npm test -> exit 0; 0 findings
+'
+P=$(mkproj fix-arch-shipped); mkdir -p "$P/spec/changes/fixes"
+printf '%s' "$FIX_SHIPPED" > "$P/spec/changes/fixes/fix.md"
+run_case archive-fix-shipped-allows check-archive allow "$(json "$P" '$spec-archive')"
+
+P=$(mkproj fix-arch-open); mkdir -p "$P/spec/changes/fixes"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/fix.md"
+run_case archive-fix-unshipped-blocks check-archive block "$(json "$P" '$spec-archive')"
+run_case archive-fix-force-overrides check-archive allow "$(json "$P" '$spec-archive force')"
+
+P=$(mkproj fix-arch-upg); mkdir -p "$P/spec/changes/fixes"
+printf '%s' "$FIX_SHIPPED" > "$P/spec/changes/fixes/fix.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/fixes/proposal.md"
+run_case archive-upgraded-fix-audits-approved check-archive block "$(json "$P" '$spec-archive')"
+
+
+# ---- daily fix batches (fixes/<YYYY-MM-DD>/): gates exempt the parent, ship/archive scan every batch ----
+
+# dated batch only (no flat fix.md): gates still exempt the fixes parent
+P=$(mkproj fix-dated-active); mkdir -p "$P/spec/changes/fixes/2026-09-21" "$P/spec/changes/live"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/2026-09-21/fix.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/live/research.md"
+run_case gate-dated-fix-plus-active-allows check-gate allow "$(json "$P" '$spec-apply')"
+run_case tbd-dated-fix-plus-active-allows check-tbd allow "$(json "$P" '$spec-propose')"
+
+P=$(mkproj fix-dated-rem); mkdir -p "$P/spec/changes/fixes/2026-09-21" "$P/spec/changes/live"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/2026-09-21/fix.md"
+printf '%s\n<!-- APPROVED: 2026-08-24 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+run_case reminder-dated-fix-coexist-nudges check-verify-reminder block "$(json_stop "$P" false)"
+
+# ship: entries in a dated batch satisfy the precondition; all-empty dated batches block
+P=$(mkproj fix-ship-dated); mkdir -p "$P/spec/changes/fixes/2026-09-21"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/2026-09-21/fix.md"
+run_case ship-dated-batch-allows check-archive allow "$(json "$P" '$spec-ship')"
+
+P=$(mkproj fix-ship-dated-empty); mkdir -p "$P/spec/changes/fixes/2026-09-21"
+printf '# Fixes\n\nstatus: open\n' > "$P/spec/changes/fixes/2026-09-21/fix.md"
+run_case ship-dated-empty-blocks check-archive block "$(json "$P" '$spec-ship')"
+
+# direct archive of the fixes tree: every dated batch shipped -> allow; any open -> block
+P=$(mkproj fix-arch-dated-ok); mkdir -p "$P/spec/changes/fixes/2026-09-20" "$P/spec/changes/fixes/2026-09-21"
+printf '%s' "$FIX_SHIPPED" > "$P/spec/changes/fixes/2026-09-20/fix.md"
+printf '%s' "$FIX_SHIPPED" > "$P/spec/changes/fixes/2026-09-21/fix.md"
+run_case archive-dated-batches-shipped-allows check-archive allow "$(json "$P" '$spec-archive')"
+
+P=$(mkproj fix-arch-dated-open); mkdir -p "$P/spec/changes/fixes/2026-09-20" "$P/spec/changes/fixes/2026-09-21"
+printf '%s' "$FIX_SHIPPED" > "$P/spec/changes/fixes/2026-09-20/fix.md"
+printf '%s' "$FIX_OPEN" > "$P/spec/changes/fixes/2026-09-21/fix.md"
+run_case archive-dated-batch-open-blocks check-archive block "$(json "$P" '$spec-archive')"
+
+# ---- 0.6.4: loop dirs join the skip filter (field finding: a legit loop change was
+#      counted as an active full change and blocked $spec-propose as "missing research.md") ----
+
+# loop coexists: running loop dir + active full change -> propose/apply on the full change allowed
+P=$(mkproj loop-coexist); mkdir -p "$P/spec/changes/g" "$P/spec/changes/live"
+printf '%s' "$LOOP_RUNNING" > "$P/spec/changes/g/loop.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] chosen | source [TBD-1] | reason\n' > "$P/spec/changes/live/research.md"
+run_case gate-loop-plus-active-allows check-gate allow "$(json "$P" '$spec-apply')"
+run_case tbd-loop-plus-active-allows check-tbd allow "$(json "$P" '$spec-propose')"
+
+# reminder window survives a coexisting loop dir (count filter)
+P=$(mkproj loop-rem-coexist); mkdir -p "$P/spec/changes/g" "$P/spec/changes/live"
+printf '%s' "$LOOP_RUNNING" > "$P/spec/changes/g/loop.md"
+printf '%s\n<!-- APPROVED: 2026-09-03 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/live/proposal.md"
+run_case reminder-loop-coexist-nudges check-verify-reminder block "$(json_stop "$P" false)"
+
+# precedence: an upgraded loop dir (loop.md + proposal.md) is a NORMAL full change
+P=$(mkproj loop-upgraded); mkdir -p "$P/spec/changes/grown"
+printf '%s' "$LOOP_RUNNING" > "$P/spec/changes/grown/loop.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/grown/proposal.md"
+run_case gate-upgraded-loop-counts check-gate allow "$(json "$P" '$spec-apply')"
+
+# ---- current-change pointer (spec/changes/.current): hit / dangling fallback /
+#      paused-target fallback / reminder binding ----
+
+P=$(mkproj ptr-hit); mkdir -p "$P/spec/changes/a" "$P/spec/changes/b"
+printf '# R\n\n## Open [TBD]\n- [TBD-1] x\n' > "$P/spec/changes/a/research.md"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] ok\n' > "$P/spec/changes/b/research.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/b/proposal.md"
+printf 'b\n' > "$P/spec/changes/.current"
+run_case tbd-pointer-selects-target check-tbd allow "$(json "$P" '$spec-propose')"
+run_case gate-pointer-selects-target check-gate allow "$(json "$P" '$spec-apply')"
+
+P=$(mkproj ptr-dangle-multi); mkdir -p "$P/spec/changes/a" "$P/spec/changes/b"
+printf '# R\n\n## Open [TBD]\n(none)\n' > "$P/spec/changes/a/research.md"
+printf '# R\n\n## Open [TBD]\n(none)\n' > "$P/spec/changes/b/research.md"
+printf 'ghost\n' > "$P/spec/changes/.current"
+run_case tbd-pointer-dangling-multi-blocks check-tbd block "$(json "$P" '$spec-propose')"
+
+P=$(mkproj ptr-dangle-one); mkdir -p "$P/spec/changes/only"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/only/proposal.md"
+printf 'ghost\n' > "$P/spec/changes/.current"
+run_case gate-pointer-dangling-single-falls-back check-gate allow "$(json "$P" '$spec-apply')"
+
+P=$(mkproj ptr-paused); mkdir -p "$P/spec/changes/parked" "$P/spec/changes/live"
+printf 'paused: 2026-09-10 | reason: t\n' > "$P/spec/changes/parked/.paused"
+printf '# R\n\n## Open [TBD]\n(none)\n\n## Decided\n- [DEC-1] ok\n' > "$P/spec/changes/live/research.md"
+printf 'parked\n' > "$P/spec/changes/.current"
+run_case tbd-pointer-paused-target-falls-back check-tbd allow "$(json "$P" '$spec-propose')"
+
+P=$(mkproj ptr-rem); mkdir -p "$P/spec/changes/appr" "$P/spec/changes/draft"
+printf '%s\n<!-- APPROVED: 2026-09-10 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/appr/proposal.md"
+printf '# R\nwip\n' > "$P/spec/changes/draft/research.md"
+printf 'appr\n' > "$P/spec/changes/.current"
+run_case reminder-pointer-binds-nudge check-verify-reminder block "$(json_stop "$P" false)"
+printf 'draft\n' > "$P/spec/changes/.current"
+run_case reminder-pointer-other-allows check-verify-reminder allow "$(json_stop "$P" false)"
+
+# archive with multiple active changes: explicit name > pointer > let through (never block
+# on multiplicity itself); a selected target is audited like a sole active change
+P=$(mkproj ptr-arch); mkdir -p "$P/spec/changes/appr" "$P/spec/changes/draft"
+printf '%s\n<!-- APPROVED: 2026-09-10 12:00 -->\n' "$FULL_PROPOSAL" > "$P/spec/changes/appr/proposal.md"
+printf '%s' "$FULL_PROPOSAL" > "$P/spec/changes/draft/proposal.md"
+run_case archive-multi-no-pointer-allows check-archive allow "$(json "$P" '$spec-archive')"
+printf 'ghost\n' > "$P/spec/changes/.current"
+run_case archive-pointer-dangling-multi-allows check-archive allow "$(json "$P" '$spec-archive')"
+printf 'draft\n' > "$P/spec/changes/.current"
+run_case archive-pointer-unapproved-blocks check-archive block "$(json "$P" '$spec-archive')"
+run_case archive-pointer-force-overrides check-archive allow "$(json "$P" '$spec-archive force')"
+run_case archive-named-target-beats-pointer check-archive allow "$(json "$P" '$spec-archive appr')"
+printf 'appr\n' > "$P/spec/changes/.current"
+run_case archive-pointer-approved-allows check-archive allow "$(json "$P" '$spec-archive')"
+run_case archive-named-unapproved-blocks check-archive block "$(json "$P" '$spec-archive draft')"
+
+# DEC-2: the documented resume re-bind command performs surgery on session_id ONLY
+assert_resume_rebind() {
+    rs="$TMP_ROOT/rebind"; mkdir -p "$rs"
+    printf 'session_id=OLD\nrounds_injected=3\nretro_reinjects=1\nchecked_history=1,2\ntree_fp_history=na,na\n' > "$rs/.loop-state"
+    ( cd "$rs" && awk -v s="NEWSESS" 'BEGIN{FS=OFS="="} $1=="session_id"{$2=s} 1' .loop-state > .loop-state.tmp && mv .loop-state.tmp .loop-state ) || return 1
+    grep -q '^session_id=NEWSESS$' "$rs/.loop-state" && grep -q '^rounds_injected=3$' "$rs/.loop-state" && grep -q '^retro_reinjects=1$' "$rs/.loop-state"
+}
+run_assert loop-resume-rebind-cmd assert_resume_rebind
+
+# ---- ps1 twins must be pure ASCII (plain check, not a named case: Codex-only mechanics) ----
+# The launcher's fallback runs them under Windows PowerShell 5.1, which reads a BOM-less file
+# in the ANSI codepage: a multi-byte character (an em dash in a comment) can be misdecoded and
+# break parsing. Write ASCII only ("--" for a dash).
+for f in "$HOOKS_DIR"/*.ps1; do
+    if LC_ALL=C tr -d '\r' < "$f" | LC_ALL=C grep -q '[^ -~	]'; then   # CR stripped: CRLF checkouts are fine
+        FAIL=$((FAIL+1)); echo "FAIL  ps1-ascii:$(basename "$f")  non-ASCII byte found (PS 5.1 fallback would misread it)"
+    else
+        PASS=$((PASS+1)); echo "PASS  ps1-ascii:$(basename "$f")"
+    fi
+done
+
+# ---- hooks.json.template (script installs) must mirror hooks.json (plugin installs) ----
+# Two hand-maintained copies of the same hook list; a hook added to one only (the template
+# once lacked loop-driver) silently disables it for that install method.
+if [ -f "$HOOKS_DIR/hooks.json.template" ]; then
+    sed -e 's#${PLUGIN_ROOT}/hooks#<ROOT>#g' "$HOOKS_DIR/hooks.json" | tr -d '\r' > "$TMP_ROOT/hj.plugin"
+    sed -e 's#__SDD_HOOKS_DIR__#<ROOT>#g' "$HOOKS_DIR/hooks.json.template" | tr -d '\r' > "$TMP_ROOT/hj.script"
+    if diff "$TMP_ROOT/hj.plugin" "$TMP_ROOT/hj.script" > "$TMP_ROOT/hj.diff"; then
+        PASS=$((PASS+1)); echo "PASS  hooks-template-sync"
+    else
+        FAIL=$((FAIL+1)); echo "FAIL  hooks-template-sync  hooks.json.template differs from hooks.json (< plugin, > template)"
+        sed 's/^/      /' "$TMP_ROOT/hj.diff" | head -6
+    fi
+fi
+
+# ---- CRLF artifacts (core.autocrlf checkouts on Windows): both twins must read them like LF ----
+crlf() { awk '{ printf "%s\r\n", $0 }'; }
+P=$(mkproj crlf-gate); mkdir -p "$P/spec/changes/my-change"
+printf '%s' "$FULL_PROPOSAL" | crlf > "$P/spec/changes/my-change/proposal.md"
+run_case crlf-gate-happy-path      check-gate allow "$(json "$P" '$spec-apply')"
+P=$(mkproj crlf-tbd); mkdir -p "$P/spec/changes/c"
+printf '# R\n\n## Open [TBD]\n- [TBD-1] pick one\n\n## Decided\n(none)\n' | crlf > "$P/spec/changes/c/research.md"
+run_case crlf-tbd-open-blocks      check-tbd block "$(json "$P" '$spec-propose')"
+P=$(mkproj crlf-arch-loop); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | sed -e 's/^status: running$/status: done/' \
+    -e 's/^- \[ \] A-1 thing (verify: x)$/- [x] A-1 thing (verify: x)/' | crlf > "$P/spec/changes/g/loop.md"
+run_case crlf-archive-loop-done-allows check-archive allow "$(json "$P" '$spec-archive')"
+P=$(mkproj crlf-arch-quick); mkdir -p "$P/spec/changes/h"
+printf '%s' "$QUICK_DONE" | crlf > "$P/spec/changes/h/quick.md"
+run_case crlf-archive-quick-done-allows check-archive allow "$(json "$P" '$spec-archive')"
+P=$(mkproj crlf-arch-fix); mkdir -p "$P/spec/changes/fixes"
+printf '%s' "$FIX_SHIPPED" | crlf > "$P/spec/changes/fixes/fix.md"
+run_case crlf-archive-fix-shipped-allows check-archive allow "$(json "$P" '$spec-archive')"
+P=$(mkproj crlf-loop); mkdir -p "$P/spec/changes/g"
+printf '%s' "$LOOP_RUNNING" | crlf > "$P/spec/changes/g/loop.md"
+run_driver_case crlf-loop-continue-reinjects reinject "$P" - "$(json_stop "$P" false)"
+
+echo "----"
+echo "pass=$PASS fail=$FAIL"
+[ $FAIL -eq 0 ] || exit 1
+exit 0

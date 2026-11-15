@@ -1,0 +1,3 @@
+# GENERATED from core/rules/sgconfig.yml — edit the core file and run node tools/generate.mjs; hand edits will be overwritten
+ruleDirs:
+  - dirty-data

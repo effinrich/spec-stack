@@ -1,0 +1,9 @@
+# GENERATED from core/rules/dirty-data/java-empty-catch.yml — edit the core file and run node tools/generate.mjs; hand edits will be overwritten
+id: java-empty-catch
+language: java
+severity: warning
+message: "Empty catch block — the exception is swallowed silently (charter: failure must be loud)"
+rule:
+  pattern:
+    context: "try {} catch ($T $E) {}"
+    selector: catch_clause

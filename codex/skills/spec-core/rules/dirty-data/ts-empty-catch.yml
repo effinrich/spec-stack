@@ -1,0 +1,9 @@
+# GENERATED from core/rules/dirty-data/ts-empty-catch.yml — edit the core file and run node tools/generate.mjs; hand edits will be overwritten
+id: ts-empty-catch
+language: typescript
+severity: warning
+message: "Empty catch block — the error is swallowed silently (charter: failure must be loud)"
+rule:
+  pattern:
+    context: "try {} catch ($E) {}"
+    selector: catch_clause

@@ -1,0 +1,1 @@
+{"name": "spec", "version": "0.12.0", "description": "Spec-driven multi-agent harness: spec-workflow's gate/verify/loop core plus ultrawork parallel dispatch, ultraqa QA cycling, and TDD per-task discipline", "author": {"name": "effinrich"}, "keywords": ["spec", "harness", "multi-agent", "ultrawork", "ultraqa", "tdd", "workflow", "hook", "sdd"]}
