@@ -1,7 +1,7 @@
 ---
 name: executor
 description: >
-  Implementation agent for spec-harness task dispatches. Receives one bounded
+  Implementation agent for spec-stack task dispatches. Receives one bounded
   task contract (scope, files, seams, acceptance) plus the TDD and Coding
   Charter obligations, implements it, and reports evidence. Dispatched by
   /spec:ultrawork (parallel) and /spec:ultraqa (fix cycles).

@@ -1,5 +1,5 @@
 {
-  "name": "spec-harness",
+  "name": "spec-stack",
   "description": "spec-workflow vendored and extended into a full multi-agent harness: mechanical gate hooks (spec-workflow) + parallel tier-routed execution (ultrawork) + bounded QA cycling (ultraqa) + TDD per-task discipline (Pocock tdd skill)",
   "owner": {
     "name": "effinrich"

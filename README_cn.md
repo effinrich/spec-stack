@@ -6,8 +6,8 @@
 
 让大改动可控可回滚——调研、拷问、提案、HARD GATE、实施、验证、归档，每步可重入、可硬约束、可派单。
 
-[![Version](https://img.shields.io/badge/version-0.11.1-blue.svg)](https://github.com/kamioj/spec-workflow)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/kamioj/spec-workflow)
+[![Version](https://img.shields.io/badge/version-0.12.0-blue.svg)](https://github.com/effinrich/spec-stack)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/effinrich/spec-stack)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-v2.1+-purple.svg)](https://docs.claude.com/en/docs/claude-code)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -49,15 +49,15 @@ AI 辅助的 spec-driven development 已有两种范式：
 $env:GITHUB_TOKEN = "ghp_xxxxxxxxxxxx"
 
 # 注册 marketplace + 装 plugin
-claude plugin marketplace add kamioj/spec-workflow
-claude plugin install spec@spec-workflow
+claude plugin marketplace add effinrich/spec-stack
+claude plugin install spec@spec-stack
 ```
 
 **用 OpenAI Codex CLI？** 同一工作流以 Codex 插件形式从本仓库分发——同样的硬门、同样的工件，命令形式为 `$spec-*` 技能：
 
 ```sh
-codex plugin marketplace add kamioj/spec-workflow
-codex plugin add spec@spec-workflow
+codex plugin marketplace add effinrich/spec-stack
+codex plugin add spec@spec-stack
 ```
 
 完整 Codex 安装步骤（`$spec-setup` 补装 agents、一次性 hooks 信任）与已知差异见 [codex/README.md](codex/README.md)。
@@ -426,6 +426,6 @@ claude --plugin-dir .
 
 <div align="center">
 
-Built with [Claude Code](https://claude.com/claude-code) · Maintained by [@kamioj](https://github.com/kamioj)
+Built with [Claude Code](https://claude.com/claude-code) · Maintained by [@effinrich](https://github.com/effinrich) · Base: [kamioj/spec-workflow](https://github.com/kamioj/spec-workflow)
 
 </div>

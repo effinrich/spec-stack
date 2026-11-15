@@ -1,6 +1,6 @@
 # GENERATED from core/agents/executor.md — edit the core file and run node tools/generate.mjs; hand edits will be overwritten
 name = "executor"
-description = "Implementation agent for spec-harness task dispatches. Receives one bounded task contract (scope, files, seams, acceptance) plus the TDD and Coding Charter obligations, implements it, and reports evidence. Dispatched by $spec-ultrawork (parallel) and $spec-ultraqa (fix cycles)."
+description = "Implementation agent for spec-stack task dispatches. Receives one bounded task contract (scope, files, seams, acceptance) plus the TDD and Coding Charter obligations, implements it, and reports evidence. Dispatched by $spec-ultrawork (parallel) and $spec-ultraqa (fix cycles)."
 developer_instructions = '''
 # Executor Agent
 

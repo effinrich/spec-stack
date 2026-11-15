@@ -6,8 +6,8 @@
 
 Large changes, kept controllable and reversible. The pipeline — research → clarify → propose → **HARD GATE** → implement → verify → archive — is re-entrant at every step, enforced by hooks, and runs its agents in parallel.
 
-[![Version](https://img.shields.io/badge/version-0.11.1-blue.svg)](https://github.com/kamioj/spec-workflow)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/kamioj/spec-workflow)
+[![Version](https://img.shields.io/badge/version-0.12.0-blue.svg)](https://github.com/effinrich/spec-stack)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/effinrich/spec-stack)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-v2.1+-purple.svg)](https://docs.claude.com/en/docs/claude-code)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -17,7 +17,7 @@ Large changes, kept controllable and reversible. The pipeline — research → c
 
 ---
 
-## spec-harness: the multi-agent extension
+## spec-stack: the multi-agent extension
 
 This is spec-workflow packaged with an execution and QA layer on top: `/spec:ultrawork` (parallel tier-routed dispatch), `/spec:ultraqa` (bounded QA cycling with fuses), the TDD skill (per-task red → green), and executor / architect / qa-tester agents. Gates and the fresh-context verifier stay the terminal authority. Full layer map and phase mapping: [HARNESS.md](HARNESS.md). Provenance: [NOTICE](NOTICE).
 
@@ -55,16 +55,16 @@ Built for one person making large changes, with guardrails — stricter than Ope
 $env:GITHUB_TOKEN = "ghp_xxxxxxxxxxxx"
 
 # Register the marketplace and install the plugin
-claude plugin marketplace add kamioj/spec-workflow
-claude plugin install spec@spec-workflow
+claude plugin marketplace add effinrich/spec-stack
+claude plugin install spec@spec-stack
 ```
 
 **Using OpenAI Codex CLI instead?** The same workflow ships as a Codex plugin from this
 repo — same gates, same artifacts, `$spec-*` skills instead of `/spec:*` commands:
 
 ```sh
-codex plugin marketplace add kamioj/spec-workflow
-codex plugin add spec@spec-workflow
+codex plugin marketplace add effinrich/spec-stack
+codex plugin add spec@spec-stack
 ```
 
 Full Codex install steps (agent bootstrap via `$spec-setup`, one-time hook trust) and the
@@ -433,6 +433,6 @@ Released under the [MIT License](LICENSE).
 
 <div align="center">
 
-Built with [Claude Code](https://claude.com/claude-code) · Maintained by [@kamioj](https://github.com/kamioj)
+Built with [Claude Code](https://claude.com/claude-code) · Maintained by [@effinrich](https://github.com/effinrich) · Base: [kamioj/spec-workflow](https://github.com/kamioj/spec-workflow)
 
 </div>

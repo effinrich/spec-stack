@@ -1,4 +1,4 @@
-# HARNESS.md — the spec-harness stack
+# HARNESS.md — the spec-stack stack
 
 One plugin, four layers. The design goal: fast autonomous execution that cannot silently derail, because every authority that matters is mechanical, not prompt-level.
 
@@ -42,8 +42,8 @@ HARD GATE (user approves proposal)
 ## Install
 
 ```sh
-claude plugin marketplace add effinrich/spec-harness
-claude plugin install spec@spec-harness
+claude plugin marketplace add effinrich/spec-stack
+claude plugin install spec@spec-stack
 ```
 
 Windows: the gate hooks run under Git Bash — without it they fail open, so install Git Bash first.
