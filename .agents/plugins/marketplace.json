@@ -1,5 +1,5 @@
 {
-  "name": "spec-workflow",
+  "name": "spec-stack",
   "plugins": [
     {
       "name": "spec",

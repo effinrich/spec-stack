@@ -52,7 +52,7 @@ claude plugin marketplace add effinrich/spec-stack
 claude plugin install spec@spec-stack
 # codex:
 codex plugin marketplace add effinrich/spec-stack
-codex plugin add spec@spec-stack
+codex plugin add spec@spec-stack   # codex-cli 0.142+; older: npx github:effinrich/spec-stack codex-install
 ```
 
 Windows: the gate hooks run under Git Bash — without it they fail open, so install Git Bash first.

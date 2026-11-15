@@ -6,7 +6,7 @@
 
 Large changes, kept controllable and reversible. The pipeline — research → clarify → propose → **HARD GATE** → implement → verify → archive — is re-entrant at every step, enforced by hooks, and runs its agents in parallel.
 
-[![Version](https://img.shields.io/badge/version-0.12.0-blue.svg)](https://github.com/effinrich/spec-stack)
+[![Version](https://img.shields.io/badge/version-0.12.1-blue.svg)](https://github.com/effinrich/spec-stack)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/effinrich/spec-stack)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-v2.1+-purple.svg)](https://docs.claude.com/en/docs/claude-code)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -78,7 +78,7 @@ bodies themselves (spawn_agent contract, agent freshness pre-check, background s
 
 ```sh
 codex plugin marketplace add effinrich/spec-stack
-codex plugin add spec@spec-stack
+codex plugin add spec@spec-stack   # codex-cli 0.142+; older: npx github:effinrich/spec-stack codex-install
 # or the vendored file-copy installer (skills -> ~/.agents/skills, agents -> ~/.codex/agents,
 # hooks -> ~/.codex/sdd-hooks):
 npx github:effinrich/spec-stack codex-install

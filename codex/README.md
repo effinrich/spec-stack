@@ -16,7 +16,7 @@ Install from a repo URL or local checkout:
 
 ```sh
 codex plugin marketplace add <repo-url-or-local-path>
-codex plugin add spec@spec-workflow
+codex plugin add spec@spec-stack
 # (verified on codex-cli 0.142.1: the subcommand is `add`, and the plugin must be
 #  qualified as <plugin>@<marketplace> unless you pass --marketplace)
 ```
@@ -118,8 +118,8 @@ hand edits here are overwritten by the next generate. Hooks, both manifests, thi
 the install scripts, and `spec-setup` are hand-maintained (not generator-owned).
 
 Local-path marketplaces don't support `codex plugin marketplace upgrade` (Git-only); to
-refresh a local install after regenerating: `codex plugin remove spec@spec-workflow`
-then `codex plugin add spec@spec-workflow`.
+refresh a local install after regenerating: `codex plugin remove spec@spec-stack`
+then `codex plugin add spec@spec-stack`.
 
 ## Editing the gates
 

@@ -104,14 +104,25 @@ function install() {
   if (wantCodex) {
     if (has("codex")) {
       console.log("\n[codex] registering marketplace and installing plugin...\n");
-      if (run("codex", ["plugin", "marketplace", "add", REPO]) && run("codex", ["plugin", "add", "spec@spec-stack"])) {
-        installed++;
-        console.log("\n[codex] installed. Hooks must be trusted once in the Codex TUI hooks browser.");
+      run("codex", ["plugin", "marketplace", "add", REPO]);
+      // `codex plugin add` exists on codex-cli 0.142+; older CLIs only have
+      // `plugin marketplace`. Fall back to the vendored file-copy installer.
+      const probe = spawnSync("codex", ["plugin", "add", "--help"], { encoding: "utf8" });
+      const pluginAddOk = probe.status === 0;
+      if (pluginAddOk) {
+        if (run("codex", ["plugin", "add", "spec@spec-stack"])) {
+          installed++;
+          console.log("\n[codex] installed. Hooks must be trusted once in the Codex TUI hooks browser.");
+        }
+      } else {
+        console.log("\n[codex] this codex-cli lacks `plugin add` — using the vendored file installer:\n");
+        if (codexInstall() === 0) installed++;
       }
     } else {
       console.log("\n[codex] CLI not found. Manual install:\n");
       console.log("  codex plugin marketplace add effinrich/spec-stack");
-      console.log("  codex plugin add spec@spec-stack");
+      console.log("  codex plugin add spec@spec-stack        # codex-cli 0.142+");
+      console.log("  npx github:effinrich/spec-stack codex-install   # older codex-cli");
     }
   }
 
