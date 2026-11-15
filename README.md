@@ -50,6 +50,17 @@ Built for one person making large changes, with guardrails — stricter than Ope
 
 ### Install
 
+**One command, either agent (npx)** — detects `claude` and/or `codex` on PATH and installs for each found:
+
+```sh
+npx github:effinrich/spec-stack            # install for all detected agents
+npx github:effinrich/spec-stack --claude    # Claude Code only
+npx github:effinrich/spec-stack --codex     # Codex only
+npx github:effinrich/spec-stack doctor      # pre-flight: CLIs, Git Bash, ast-grep, spec/ state
+```
+
+**Claude Code, manual:**
+
 ```pwsh
 # Configure a GitHub token (required for a private repo)
 $env:GITHUB_TOKEN = "ghp_xxxxxxxxxxxx"
@@ -59,12 +70,18 @@ claude plugin marketplace add effinrich/spec-stack
 claude plugin install spec@spec-stack
 ```
 
-**Using OpenAI Codex CLI instead?** The same workflow ships as a Codex plugin from this
-repo — same gates, same artifacts, `$spec-*` skills instead of `/spec:*` commands:
+**OpenAI Codex CLI** — the same workflow ships as a Codex plugin from this
+repo: same gates, same artifacts, `$spec-*` skills instead of `/spec:*` commands, and the
+harness stack included (`$spec-ultrawork`, `$spec-ultraqa`, `spec-tdd` skill, executor /
+architect / qa-tester agents). Codex dispatch mechanics are spelled out in the skill
+bodies themselves (spawn_agent contract, agent freshness pre-check, background shell):
 
 ```sh
 codex plugin marketplace add effinrich/spec-stack
 codex plugin add spec@spec-stack
+# or the vendored file-copy installer (skills -> ~/.agents/skills, agents -> ~/.codex/agents,
+# hooks -> ~/.codex/sdd-hooks):
+npx github:effinrich/spec-stack codex-install
 ```
 
 Full Codex install steps (agent bootstrap via `$spec-setup`, one-time hook trust) and the

@@ -42,11 +42,30 @@ HARD GATE (user approves proposal)
 ## Install
 
 ```sh
+npx github:effinrich/spec-stack        # detects claude and/or codex, installs for each
+```
+
+Or manually:
+
+```sh
 claude plugin marketplace add effinrich/spec-stack
 claude plugin install spec@spec-stack
+# codex:
+codex plugin marketplace add effinrich/spec-stack
+codex plugin add spec@spec-stack
 ```
 
 Windows: the gate hooks run under Git Bash — without it they fail open, so install Git Bash first.
+
+## Codex parity
+
+The Codex tree carries the full stack: `$spec-ultrawork`, `$spec-ultraqa`, the `spec-tdd`
+skill, and executor / architect / qa-tester agent TOMLs (installed to `~/.codex/agents/`).
+Codex dispatch mechanics are in the skill bodies: spawn_agent `message`/`items` contract,
+agent freshness pre-check against shipped TOMLs, background shell for long operations.
+Tier routing maps to whatever models your Codex config exposes. The one agent-specific
+gap: Codex cannot bundle agent TOMLs, so stale installed definitions are the known
+failure mode — the freshness pre-check in each dispatch command is the mitigation.
 
 ## Commands added on top of spec-workflow
 
